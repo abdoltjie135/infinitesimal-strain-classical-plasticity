@@ -1,0 +1,5 @@
+set polynomial degree             = 1
+set number of initial refinements = 3
+set number of cycles              = 5
+set refinement strategy           = global
+set output directory              = test
