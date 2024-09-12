@@ -450,8 +450,11 @@ namespace PlasticityModel
             const Point<dim> p1(0, 0, 0);
             const Point<dim> p2(1.0, 1.0, 1.0);
 
-            GridGenerator::hyper_rectangle(triangulation, p1, p2);
+            GridGenerator::hyper_rectangle(triangulation, p1, p2, true);
 
+            // default: 0 left had face, 1 right hand face, 2 bottom face, 3 top face, 4 front face, 5 back face
+
+            /*
             // the following assigns boundary IDs to the faces of the mesh
             // inequality symbols are used because of floating-point arithmetic
             for (const auto& cell : triangulation.active_cell_iterators())
@@ -471,6 +474,7 @@ namespace PlasticityModel
                         if (std::fabs(face->center()[2] - p1[2]) < 1e-12) // face at z=0
                             face->set_boundary_id(6);
                     }
+              */
         }
 
         triangulation.refine_global(n_initial_global_refinements); // refine the mesh globally based on prm file
@@ -487,12 +491,14 @@ namespace PlasticityModel
 
             locally_owned_dofs = dof_handler.locally_owned_dofs();
             locally_relevant_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler);
+            // DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
         }
 
         // setup hanging nodes and Dirichlet constraints
         {
             TimerOutput::Scope t(computing_timer, "Setup: constraints");
             constraints_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
+            // constraints_dirichlet_and_hanging_nodes.reinit(locally_relevant_dofs);
             DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
 
 
@@ -544,37 +550,59 @@ namespace PlasticityModel
     void PlasticityProblem<dim>::compute_dirichlet_constraints()
     {
         constraints_dirichlet_and_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
+        // constraints_dirichlet_and_hanging_nodes.reinit(locally_relevant_dofs);
         constraints_dirichlet_and_hanging_nodes.merge(constraints_hanging_nodes);
 
         if (base_mesh == "box")
         {
+            const FEValuesExtractors::Scalar x_displacement(0);
+            const FEValuesExtractors::Scalar y_displacement(1);
+            const FEValuesExtractors::Scalar z_displacement(2);
+
             // the following function enforces dirichlet constrains over boundaries
             VectorTools::interpolate_boundary_values(
                 dof_handler,
                 // top face
-                1,
-                EquationData::BoundaryValues<dim>(),
+                3,
+                // EquationData::BoundaryValues<dim>(),
+                Functions::ConstantFunction<dim>(0.4, dim),
                 constraints_dirichlet_and_hanging_nodes,
-                ComponentMask());
+                fe.component_mask(z_displacement));
 
             VectorTools::interpolate_boundary_values(
                 dof_handler,
                 // bottom face
-                6,
-                EquationData::BoundaryValues<dim>(),
+                2,
+                Functions::ZeroFunction<dim>(dim),
                 constraints_dirichlet_and_hanging_nodes,
-                ComponentMask());
+                fe.component_mask(z_displacement));
 
-            // constrain in the x and y directions and leaving z free
-            const FEValuesExtractors::Scalar x_displacement(0);
-            const FEValuesExtractors::Scalar y_displacement(1);
             VectorTools::interpolate_boundary_values(
+                dof_handler,
+                // left face
+                0,
+                Functions::ZeroFunction<dim>(dim),
+                constraints_dirichlet_and_hanging_nodes,
+                fe.component_mask(x_displacement));
+
+            if (dim == 3)
+            {
+                VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    // front face
+                    4,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(y_displacement));
+            }
+
+            /*VectorTools::interpolate_boundary_values(
                 dof_handler,
                 // the sides of the box
                 8,
                 EquationData::BoundaryValues<dim>(),
                 constraints_dirichlet_and_hanging_nodes,
-                (fe.component_mask(x_displacement) | fe.component_mask(y_displacement)));
+                (fe.component_mask(x_displacement) | fe.component_mask(y_displacement)));*/
         }
         else
             VectorTools::interpolate_boundary_values(
