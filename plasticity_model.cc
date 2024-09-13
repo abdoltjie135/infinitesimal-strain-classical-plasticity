@@ -5,7 +5,6 @@
  *              and is for partial completion of MEC 5068Z
  */
 
-// testing mj
 
 // include the necessary libraries
 #include <deal.II/base/conditional_ostream.h>
