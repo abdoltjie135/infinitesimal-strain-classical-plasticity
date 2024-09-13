@@ -5,7 +5,7 @@
  *              and is for partial completion of MEC 5068Z
  */
 
-// THIS IS A TEST FOR LAB PC
+// THIS IS A TEST FOR CERECAM PC
 
 // include the necessary libraries
 #include <deal.II/base/conditional_ostream.h>
