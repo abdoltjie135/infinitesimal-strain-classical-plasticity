@@ -452,8 +452,7 @@ namespace PlasticityModel
             const Point<dim> p2(1.0, 1.0, 1.0);
 
             GridGenerator::hyper_rectangle(triangulation, p1, p2, true);
-
-            // default: 0 left had face, 1 right hand face, 2 bottom face, 3 top face, 4 front face, 5 back face
+            // default: 0 left hand face, 1 right hand face, 2 bottom face, 3 top face, 4 front face, 5 back face
 
             /*
             // the following assigns boundary IDs to the faces of the mesh
@@ -586,12 +585,28 @@ namespace PlasticityModel
                 constraints_dirichlet_and_hanging_nodes,
                 fe.component_mask(x_displacement));
 
-            if (dim == 3)
+            VectorTools::interpolate_boundary_values(
+                dof_handler,
+                // left face
+                1,
+                Functions::ZeroFunction<dim>(dim),
+                constraints_dirichlet_and_hanging_nodes,
+                fe.component_mask(x_displacement));
+
+            if (dim == 3)  // the front and back faces only exist in 3D
             {
                 VectorTools::interpolate_boundary_values(
                     dof_handler,
                     // front face
                     4,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(y_displacement));
+
+                VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    // front face
+                    5,
                     Functions::ZeroFunction<dim>(dim),
                     constraints_dirichlet_and_hanging_nodes,
                     fe.component_mask(y_displacement));
