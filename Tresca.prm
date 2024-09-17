@@ -1,0 +1,6 @@
+set polynomial degree             = 1
+set number of initial refinements = 1
+set number of cycles              = 5
+set refinement strategy           = percentage
+set output directory              = Tresca
+set yield-criteria                = Tresca
