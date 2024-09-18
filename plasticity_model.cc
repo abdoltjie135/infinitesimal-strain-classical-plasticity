@@ -179,35 +179,6 @@ namespace PlasticityModel
         }
     }
 
-    /*
-    // The following function calculates the stress-strain tensor based on the strain tensor and
-    // returns whether the material has yielded or not (true if it has yielded, false otherwise)
-    template <int dim>
-    bool ConstitutiveLaw<dim>::get_stress_strain_tensor(
-        const SymmetricTensor<2, dim>& strain_tensor,
-        SymmetricTensor<4, dim>& stress_strain_tensor) const
-    {
-        Assert(dim == 3, ExcNotImplemented());
-
-        SymmetricTensor<2, dim> stress_tensor;
-        stress_tensor =
-            (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
-
-        const SymmetricTensor<2, dim> deviator_stress_tensor = deviator(stress_tensor);
-        const double deviator_stress_tensor_norm = deviator_stress_tensor.norm();
-
-        stress_strain_tensor = stress_strain_tensor_mu;
-        if (deviator_stress_tensor_norm > sigma_0)
-        {
-            const double beta = sigma_0 / deviator_stress_tensor_norm;
-            stress_strain_tensor *= (gamma + (1 - gamma) * beta);
-        }
-
-        stress_strain_tensor += stress_strain_tensor_kappa;
-
-        return (deviator_stress_tensor_norm > sigma_0); // checking if yielding has occurred
-    }
-    */
 
     template <int dim>
     void ConstitutiveLaw<dim>::get_linearized_stress_strain_tensors(
@@ -283,43 +254,6 @@ namespace PlasticityModel
     }
 
 
-    /*
-    // A large part of the function below is the same as the get_stress_strain_tensor.
-    // The following function also computes a linearized_stress_strain tensor which is necessary while
-    // nonlinear problems. The Newton-Raphson method requires linearizing the nonlinear equations.
-    template <int dim>
-    void ConstitutiveLaw<dim>::get_linearized_stress_strain_tensors(
-        const SymmetricTensor<2, dim>& strain_tensor,
-        SymmetricTensor<4, dim>& stress_strain_tensor_linearized,
-        SymmetricTensor<4, dim>& stress_strain_tensor) const
-    {
-        Assert(dim == 3, ExcNotImplemented()); // checking if the code is being run in 3D
-
-        SymmetricTensor<2, dim> stress_tensor;
-        stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
-
-        stress_strain_tensor = stress_strain_tensor_mu;
-        stress_strain_tensor_linearized = stress_strain_tensor_mu;
-
-        SymmetricTensor<2, dim> deviator_stress_tensor = deviator(stress_tensor);
-        const double deviator_stress_tensor_norm = deviator_stress_tensor.norm();
-
-        if (deviator_stress_tensor_norm > sigma_0)
-        {
-            const double beta = sigma_0 / deviator_stress_tensor_norm;
-            stress_strain_tensor *= (gamma + (1 - gamma) * beta);
-            stress_strain_tensor_linearized *= (gamma + (1 - gamma) * beta);
-            deviator_stress_tensor /= deviator_stress_tensor_norm;
-            stress_strain_tensor_linearized -=
-                (1 - gamma) * beta * 2 * mu * outer_product(deviator_stress_tensor, deviator_stress_tensor);
-        }
-
-        stress_strain_tensor += stress_strain_tensor_kappa;
-        stress_strain_tensor_linearized += stress_strain_tensor_kappa;
-    }
-    */
-
-
     namespace EquationData
     {
         template <int dim>
@@ -336,16 +270,16 @@ namespace PlasticityModel
         };
 
         template <int dim>
-        BoundaryForce<dim>::BoundaryForce() // constructor definition
-            : Function<dim>(dim) // initializing the base class constructor with the dimension
+        BoundaryForce<dim>::BoundaryForce()  // constructor definition
+            : Function<dim>(dim)             // initializing the base class constructor with the dimension
         {
         }
 
         // The following function returns the value of the boundary force (value) at a given point which is zero
         template <int dim>
-        double BoundaryForce<dim>::value(const Point<dim>&, const unsigned int) const // parameters are not
-        // named because they are
-        // not used
+        double BoundaryForce<dim>::value(const Point<dim>&, const unsigned int) const  // parameters are not
+                                                                                       // named because they are
+                                                                                       // not used
         {
             return 0.; // the boundary force is zero
         }
@@ -388,12 +322,12 @@ namespace PlasticityModel
     class PlasticityProblem
     {
     public:
-        PlasticityProblem(const ParameterHandler& prm); // constructor which initializes an instance of the class
-        // with the parameters in the prm object
+        PlasticityProblem(const ParameterHandler& prm);  // constructor which initializes an instance of the class
+                                                         // with the parameters in the prm object
 
         void run(); // function to run the simulation
 
-        static void declare_parameters(ParameterHandler& prm); // function to declare the parameters
+        static void declare_parameters(ParameterHandler& prm);  // function to declare the parameters
 
     private:
         void make_grid();
@@ -412,8 +346,8 @@ namespace PlasticityModel
         TimerOutput computing_timer;
 
         const unsigned int n_initial_global_refinements;
-        parallel::distributed::Triangulation<dim> triangulation; // distributing the mesh across multiple processors
-        // for parallel computing
+        parallel::distributed::Triangulation<dim> triangulation;  // distributing the mesh across multiple processors
+                                                                  // for parallel computing
 
         const unsigned int fe_degree;
         const FESystem<dim> fe;
@@ -426,7 +360,7 @@ namespace PlasticityModel
         AffineConstraints<double> constraints_dirichlet_and_hanging_nodes;
         AffineConstraints<double> all_constraints;
 
-        IndexSet active_set; // not sure if this is needed for the plasticity code
+        IndexSet active_set;  // not sure if this is needed for the plasticity code
         Vector<float> fraction_of_plastic_q_points_per_cell;
 
         TrilinosWrappers::SparseMatrix newton_matrix;
@@ -516,7 +450,7 @@ namespace PlasticityModel
 
 
     template <int dim>
-    PlasticityProblem<dim>::PlasticityProblem(const ParameterHandler& prm) // defining the constructor
+    PlasticityProblem<dim>::PlasticityProblem(const ParameterHandler& prm)  // defining the constructor
         : mpi_communicator(MPI_COMM_WORLD)
           , pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
           // the following initializes a timer to track computation times
@@ -598,32 +532,9 @@ namespace PlasticityModel
             const Point<dim> p2(1.0, 1.0, 1.0);
 
             GridGenerator::hyper_rectangle(triangulation, p1, p2, true);
-            // default: 0 left hand face, 1 right hand face, 2 bottom face, 3 top face, 4 front face, 5 back face
-
-            /*
-            // the following assigns boundary IDs to the faces of the mesh
-            // inequality symbols are used because of floating-point arithmetic
-            for (const auto& cell : triangulation.active_cell_iterators())
-                for (const auto& face : cell->face_iterators()) // checks if the face is at the boundary
-                    if (face->at_boundary())
-                    {
-                        // top face
-                        if (std::fabs(face->center()[2] - p2[2]) < 1e-12) // face at z=1
-                            face->set_boundary_id(1);
-                        // side faces
-                        if (std::fabs(face->center()[0] - p1[0]) < 1e-12 || // face at x=0
-                            std::fabs(face->center()[0] - p2[0]) < 1e-12 || // face at x=1
-                            std::fabs(face->center()[1] - p1[1]) < 1e-12 || // face at y=0
-                            std::fabs(face->center()[1] - p2[1]) < 1e-12) // face at y=1
-                            face->set_boundary_id(8);
-                        // bottom face
-                        if (std::fabs(face->center()[2] - p1[2]) < 1e-12) // face at z=0
-                            face->set_boundary_id(6);
-                    }
-              */
         }
 
-        triangulation.refine_global(n_initial_global_refinements); // refine the mesh globally based on prm file
+        triangulation.refine_global(n_initial_global_refinements);  // refine the mesh globally based on prm file
     }
 
 
@@ -711,7 +622,7 @@ namespace PlasticityModel
                 // top face
                 5,
                 // EquationData::BoundaryValues<dim>(),
-                Functions::ConstantFunction<dim>(-0.3, dim),
+                Functions::ConstantFunction<dim>(-0.002, dim),
                 constraints_dirichlet_and_hanging_nodes,
                 fe.component_mask(z_displacement));
 
@@ -725,16 +636,16 @@ namespace PlasticityModel
 
             VectorTools::interpolate_boundary_values(
                 dof_handler,
-                // left face
-                0,
+                // right face
+                1,
                 Functions::ZeroFunction<dim>(dim),
                 constraints_dirichlet_and_hanging_nodes,
                 fe.component_mask(y_displacement));
 
             VectorTools::interpolate_boundary_values(
                 dof_handler,
-                // right face
-                1,
+                // left face
+                0,
                 Functions::ZeroFunction<dim>(dim),
                 constraints_dirichlet_and_hanging_nodes,
                 fe.component_mask(y_displacement));
@@ -757,15 +668,8 @@ namespace PlasticityModel
                     constraints_dirichlet_and_hanging_nodes,
                     fe.component_mask(x_displacement));
             }
-
-            /*VectorTools::interpolate_boundary_values(
-                dof_handler,
-                // the sides of the box
-                8,
-                EquationData::BoundaryValues<dim>(),
-                constraints_dirichlet_and_hanging_nodes,
-                (fe.component_mask(x_displacement) | fe.component_mask(y_displacement)));*/
         }
+        // the following is if the half-sphere is used
         else
             VectorTools::interpolate_boundary_values(
                 dof_handler,
