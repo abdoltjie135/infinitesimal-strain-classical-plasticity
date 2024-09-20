@@ -153,11 +153,20 @@ namespace PlasticityModel
         {
             // Tresca yield criterion
             // Compute principal stresses
-            const auto principal_stresses = eigenvalues(stress_tensor);
+
+            auto principal_stresses = eigenvalues(stress_tensor);
+            std::sort(principal_stresses.begin(), principal_stresses.end());
+            // principal_stresses.sort(std::greater<double>());
 
             // Find the maximum and minimum principal stresses
-            const double sigma_max = *std::max_element(principal_stresses.begin(), principal_stresses.end());
-            const double sigma_min = *std::min_element(principal_stresses.begin(), principal_stresses.end());
+            const double sigma_max = principal_stresses[dim - 1];
+            const double sigma_min = principal_stresses[0];
+
+            // const auto principal_stresses = eigenvalues(stress_tensor);
+            //
+            // // Find the maximum and minimum principal stresses
+            // const double sigma_max = std::max_element(principal_stresses.begin(), principal_stresses.end());
+            // const double sigma_min = std::min_element(principal_stresses.begin(), principal_stresses.end());
 
             // Compute maximum shear stress for Tresca
             const double max_shear_stress = 0.5 * (sigma_max - sigma_min);
@@ -219,11 +228,15 @@ namespace PlasticityModel
         {
             // Tresca yield criterion
             // Compute principal stresses
-            const auto principal_stresses = eigenvalues(stress_tensor);
+            auto principal_stresses = eigenvalues(stress_tensor);
+            std::sort(principal_stresses.begin(), principal_stresses.end());
+            // principal_stresses.sort(std::greater<double>());
 
             // Find the maximum and minimum principal stresses
-            const double sigma_max = *std::max_element(principal_stresses.begin(), principal_stresses.end());
-            const double sigma_min = *std::min_element(principal_stresses.begin(), principal_stresses.end());
+            const double sigma_max = principal_stresses[dim - 1];
+            const double sigma_min = principal_stresses[0];
+            // const double sigma_max = std::max_element(principal_stresses.begin(), principal_stresses.end());
+            // const double sigma_min = std::min_element(principal_stresses.begin(), principal_stresses.end());
 
             // Compute maximum shear stress for Tresca
             const double max_shear_stress = 0.5 * (sigma_max - sigma_min);
