@@ -92,7 +92,7 @@ namespace PlasticityModel
 
         const SymmetricTensor<4, dim> stress_strain_tensor_kappa;
         const SymmetricTensor<4, dim> stress_strain_tensor_mu;
-        mutable SymmetricTensor<2, dim> backstress_tensor;
+        mutable SymmetricTensor<2, dim> backstress_tensor;  // mutable means that it can be modified in a const function
     };
 
     // The following is the definition of the constructor
