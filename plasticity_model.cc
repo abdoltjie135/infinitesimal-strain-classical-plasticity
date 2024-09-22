@@ -63,31 +63,36 @@ namespace PlasticityModel
     class ConstitutiveLaw
     {
     public:
-        ConstitutiveLaw(const double E,        // Young's modulus
-                        const double nu,       // Poisson's ratio
-                        const double sigma_0,  // initial yield stress
-                        const double gamma);   // isotropic hardening parameter
+        ConstitutiveLaw(const double E,           // Young's modulus
+                        const double nu,          // Poisson's ratio
+                        const double sigma_0,     // initial yield stress
+                        const double gamma_iso,   // isotropic hardening parameter
+                        const double gamma_kin);  // kinematic hardening parameter
 
         void set_sigma_0(double sigma_zero);    // set the initial yield stress
 
         // Two functions (with parameters) being declared below
         bool get_stress_strain_tensor(
             const SymmetricTensor<2, dim>& strain_tensor,
-            SymmetricTensor<4, dim>& stress_strain_tensor, std::string yield_criteria) const;
+            SymmetricTensor<4, dim>& stress_strain_tensor, std::string yield_criteria,
+            std::string hardening_law) const;
 
         void get_linearized_stress_strain_tensors(
             const SymmetricTensor<2, dim>& strain_tensor,
             SymmetricTensor<4, dim>& stress_strain_tensor_linearized,
-            SymmetricTensor<4, dim>& stress_strain_tensor, std::string yield_criteria) const;
+            SymmetricTensor<4, dim>& stress_strain_tensor, std::string yield_criteria,
+            std::string hardening_law) const;
 
     private:
         const double kappa;
         const double mu;
         double sigma_0; // this has not been made constant because it will be adjusted later
-        const double gamma;
+        const double gamma_iso;
+        const double gamma_kin;
 
         const SymmetricTensor<4, dim> stress_strain_tensor_kappa;
         const SymmetricTensor<4, dim> stress_strain_tensor_mu;
+        mutable SymmetricTensor<2, dim> backstress_tensor;
     };
 
     // The following is the definition of the constructor
@@ -95,12 +100,14 @@ namespace PlasticityModel
     ConstitutiveLaw<dim>::ConstitutiveLaw(double E,
                                           double nu,
                                           double sigma_0,
-                                          double gamma)
+                                          double gamma_iso,
+                                          double gamma_kin)
     // initialize the member variables
         : kappa(E / (3 * (1 - 2 * nu)))
           , mu(E / (2 * (1 + nu)))
           , sigma_0(sigma_0)
-          , gamma(gamma)
+          , gamma_iso(gamma_iso)
+          , gamma_kin(gamma_kin)
           , stress_strain_tensor_kappa(kappa *
               outer_product(unit_symmetric_tensor<dim>(),
                             unit_symmetric_tensor<dim>()))
@@ -109,6 +116,7 @@ namespace PlasticityModel
               (identity_tensor<dim>() - outer_product(unit_symmetric_tensor<dim>(),
                                                       unit_symmetric_tensor<dim>()) /
                   3.0))
+          , backstress_tensor()
     {
     } // constructor body is empty because all the work is done in the initializer list
 
@@ -118,6 +126,180 @@ namespace PlasticityModel
         sigma_0 = sigma_zero;
     }
 
+    template <int dim>
+    bool ConstitutiveLaw<dim>::get_stress_strain_tensor(
+        const SymmetricTensor<2, dim>& strain_tensor,
+        SymmetricTensor<4, dim>& stress_strain_tensor,
+        std::string yield_criteria,
+        std::string hardening_law) const
+    {
+        Assert(dim == 3, ExcNotImplemented());
+
+        SymmetricTensor<2, dim> stress_tensor;
+        stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
+
+        // Check the value of the yield_criteria string
+        if (yield_criteria == "Von-Mises")
+        {
+            SymmetricTensor<2, dim> deviator_stress_tensor = deviator(stress_tensor);
+            const double deviator_stress_tensor_norm = deviator_stress_tensor.norm();
+
+            stress_strain_tensor = stress_strain_tensor_mu;
+
+            if (deviator_stress_tensor_norm > sigma_0)
+            {
+                const double beta = sigma_0 / deviator_stress_tensor_norm;
+
+                if (hardening_law == "isotropic")
+                {
+                    // Isotropic hardening
+                    stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
+                }
+                else if (hardening_law == "kinematic")
+                {
+                    // Kinematic hardening
+                    backstress_tensor += gamma_kin * deviator(stress_tensor);
+                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
+                }
+            }
+
+            stress_strain_tensor += stress_strain_tensor_kappa;
+
+            return (deviator_stress_tensor_norm > sigma_0); // Von Mises yield check
+        }
+        else if (yield_criteria == "Tresca")
+        {
+            // Tresca yield criterion
+            auto principal_stresses = eigenvalues(stress_tensor);
+            std::sort(principal_stresses.begin(), principal_stresses.end());
+
+            const double sigma_max = principal_stresses[dim - 1];
+            const double sigma_min = principal_stresses[0];
+            const double max_shear_stress = 0.5 * (sigma_max - sigma_min);
+
+            stress_strain_tensor = stress_strain_tensor_mu;
+
+            if (max_shear_stress > (sigma_0 / 2))
+            {
+                const double beta = (sigma_0 / 2) / max_shear_stress;
+
+                if (hardening_law == "isotropic")
+                {
+                    // Isotropic hardening
+                    stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
+                }
+                else if (hardening_law == "kinematic")
+                {
+                    // Kinematic hardening
+                    backstress_tensor += gamma_kin * unit_symmetric_tensor<dim>() * (sigma_max - sigma_min);
+                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
+                }
+            }
+
+            stress_strain_tensor += stress_strain_tensor_kappa;
+
+            return (max_shear_stress > (sigma_0 / 2)); // Tresca yield check
+        }
+        else
+        {
+            AssertThrow(false, ExcNotImplemented());
+        }
+    }
+
+
+    template <int dim>
+    void ConstitutiveLaw<dim>::get_linearized_stress_strain_tensors(
+        const SymmetricTensor<2, dim>& strain_tensor,
+        SymmetricTensor<4, dim>& stress_strain_tensor_linearized,
+        SymmetricTensor<4, dim>& stress_strain_tensor,
+        std::string yield_criteria,
+        std::string hardening_law) const
+    {
+        Assert(dim == 3, ExcNotImplemented()); // checking if the code is being run in 3D
+
+        SymmetricTensor<2, dim> stress_tensor;
+        stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
+
+        stress_strain_tensor = stress_strain_tensor_mu;
+        stress_strain_tensor_linearized = stress_strain_tensor_mu;
+
+        if (yield_criteria == "Von-Mises")
+        {
+            SymmetricTensor<2, dim> deviator_stress_tensor = deviator(stress_tensor);
+            const double deviator_stress_tensor_norm = deviator_stress_tensor.norm();
+
+            if (deviator_stress_tensor_norm > sigma_0)
+            {
+                const double beta = sigma_0 / deviator_stress_tensor_norm;
+
+                if (hardening_law == "isotropic")
+                {
+                    // Isotropic hardening
+                    stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
+                    stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
+                }
+                else if (hardening_law == "kinematic")
+                {
+                    // Kinematic hardening
+                    backstress_tensor += gamma_kin * deviator(stress_tensor);
+                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
+                }
+
+                deviator_stress_tensor /= deviator_stress_tensor_norm;
+
+                stress_strain_tensor_linearized -=
+                    (1 - gamma_iso) * beta * 2 * mu * outer_product(deviator_stress_tensor, deviator_stress_tensor);
+            }
+
+            stress_strain_tensor += stress_strain_tensor_kappa;
+            stress_strain_tensor_linearized += stress_strain_tensor_kappa;
+        }
+        else if (yield_criteria == "Tresca")
+        {
+            auto principal_stresses = eigenvalues(stress_tensor);
+            std::sort(principal_stresses.begin(), principal_stresses.end());
+
+            const double sigma_max = principal_stresses[dim - 1];
+            const double sigma_min = principal_stresses[0];
+            const double max_shear_stress = 0.5 * (sigma_max - sigma_min);
+
+            if (max_shear_stress > (sigma_0 / 2))
+            {
+                const double beta = (sigma_0 / 2) / max_shear_stress;
+
+                if (hardening_law == "isotropic")
+                {
+                    // Isotropic hardening
+                    stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
+                    stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
+                }
+                else if (hardening_law == "kinematic")
+                {
+                    // Kinematic hardening
+                    backstress_tensor += gamma_kin * unit_symmetric_tensor<dim>() * (sigma_max - sigma_min);
+                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
+                }
+
+                // Linearize based on the principal stresses
+                SymmetricTensor<2, dim> principal_stress_tensor;
+                for (unsigned int i = 0; i < principal_stresses.size(); ++i)
+                    principal_stress_tensor[i][i] = principal_stresses[i];
+
+                stress_strain_tensor_linearized -=
+                    (1 - gamma_iso) * beta * 2 * mu * outer_product(principal_stress_tensor, principal_stress_tensor);
+            }
+
+            stress_strain_tensor += stress_strain_tensor_kappa;
+            stress_strain_tensor_linearized += stress_strain_tensor_kappa;
+        }
+        else
+        {
+            AssertThrow(false, ExcNotImplemented());
+        }
+    }
+
+
+    /*
     // The following function calculates the stress-strain tensor based on the strain tensor and
     // returns whether the material has yielded or not (true if it has yielded, false otherwise)
     template <int dim>
@@ -142,7 +324,7 @@ namespace PlasticityModel
             if (deviator_stress_tensor_norm > sigma_0)
             {
                 const double beta = sigma_0 / deviator_stress_tensor_norm;
-                stress_strain_tensor *= (gamma + (1 - gamma) * beta);
+                stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
             }
 
             stress_strain_tensor += stress_strain_tensor_kappa;
@@ -175,7 +357,7 @@ namespace PlasticityModel
             if (max_shear_stress > (sigma_0 / 2))
             {
                 const double beta = (sigma_0 / 2) / max_shear_stress;
-                stress_strain_tensor *= (gamma + (1 - gamma) * beta);
+                stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
             }
 
             stress_strain_tensor += stress_strain_tensor_kappa;
@@ -212,13 +394,13 @@ namespace PlasticityModel
             if (deviator_stress_tensor_norm > sigma_0)
             {
                 const double beta = sigma_0 / deviator_stress_tensor_norm;
-                stress_strain_tensor *= (gamma + (1 - gamma) * beta);
-                stress_strain_tensor_linearized *= (gamma + (1 - gamma) * beta);
+                stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
+                stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
 
                 deviator_stress_tensor /= deviator_stress_tensor_norm;
 
                 stress_strain_tensor_linearized -=
-                    (1 - gamma) * beta * 2 * mu * outer_product(deviator_stress_tensor, deviator_stress_tensor);
+                    (1 - gamma_iso) * beta * 2 * mu * outer_product(deviator_stress_tensor, deviator_stress_tensor);
             }
 
             stress_strain_tensor += stress_strain_tensor_kappa;
@@ -244,8 +426,8 @@ namespace PlasticityModel
             if (max_shear_stress > (sigma_0 / 2))
             {
                 const double beta = (sigma_0 / 2) / max_shear_stress;
-                stress_strain_tensor *= (gamma + (1 - gamma) * beta);
-                stress_strain_tensor_linearized *= (gamma + (1 - gamma) * beta);
+                stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
+                stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
 
                 // Instead of normalized deviatoric stress, focus on principal stress behavior
                 SymmetricTensor<2, dim> principal_stress_tensor;
@@ -254,7 +436,7 @@ namespace PlasticityModel
 
                 // Linearize based on the principal stresses
                 stress_strain_tensor_linearized -=
-                    (1 - gamma) * beta * 2 * mu * outer_product(principal_stress_tensor, principal_stress_tensor);
+                    (1 - gamma_iso) * beta * 2 * mu * outer_product(principal_stress_tensor, principal_stress_tensor);
             }
 
             stress_strain_tensor += stress_strain_tensor_kappa;
@@ -265,6 +447,7 @@ namespace PlasticityModel
             AssertThrow(false, ExcNotImplemented());
         }
     }
+    */
 
 
     namespace EquationData
@@ -383,12 +566,13 @@ namespace PlasticityModel
         TrilinosWrappers::MPI::Vector newton_rhs_uncondensed;
         TrilinosWrappers::MPI::Vector diag_mass_matrix_vector;
 
-        const double e_modulus, nu, gamma, sigma_0;
+        const double e_modulus, nu, gamma_iso, gamma_kin, sigma_0;
         ConstitutiveLaw<dim> constitutive_law;
 
         const std::string base_mesh;
 
         const std::string yield_criteria;
+        const std::string hardening_law;
 
         struct RefinementStrategy // a struct is similar to a class but with public members by default
         {
@@ -459,6 +643,12 @@ namespace PlasticityModel
             "Von-Mises",
             Patterns::Selection("Von-Mises|Tresca"),
             "Select the yield-criteria: 'Von-Mises' or 'Tresca'.");
+        // The following parameter is for the hardening-law
+        prm.declare_entry(
+            "hardening-law",
+            "isotropic",
+            Patterns::Selection("isotropic|kinematic"),
+            "Select the hardening-law: 'isotropic' or 'kinematic'.");
     }
 
 
@@ -477,13 +667,15 @@ namespace PlasticityModel
 
           , e_modulus(200000)
           , nu(0.3)
-          , gamma(0.01)
+          , gamma_iso(0.01)
+          , gamma_kin(0.01)
           , sigma_0(400.0)
-          , constitutive_law(e_modulus, nu, sigma_0, gamma)
+          , constitutive_law(e_modulus, nu, sigma_0, gamma_iso, gamma_kin)
 
           , base_mesh(prm.get("base mesh"))
 
           , yield_criteria(prm.get("yield-criteria"))
+          , hardening_law(prm.get("hardening-law"))
 
           , transfer_solution(prm.get_bool("transfer solution"))
           , n_refinement_cycles(prm.get_integer("number of cycles"))
@@ -747,7 +939,7 @@ namespace PlasticityModel
                     constitutive_law.get_linearized_stress_strain_tensors(
                         strain_tensor[q_point],
                         stress_strain_tensor_linearized,
-                        stress_strain_tensor, yield_criteria);
+                        stress_strain_tensor, yield_criteria, hardening_law);
 
                     for (unsigned int i = 0; i < dofs_per_cell; ++i)
                     {
@@ -849,7 +1041,7 @@ namespace PlasticityModel
                 {
                     SymmetricTensor<4, dim> stress_strain_tensor;
                     const bool q_point_is_plastic = constitutive_law.get_stress_strain_tensor(
-                        strain_tensors[q_point], stress_strain_tensor, yield_criteria);
+                        strain_tensors[q_point], stress_strain_tensor, yield_criteria, hardening_law);
                     if (q_point_is_plastic)
                         ++fraction_of_plastic_q_points_per_cell(
                             cell->active_cell_index());
