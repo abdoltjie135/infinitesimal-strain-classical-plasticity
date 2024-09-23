@@ -159,7 +159,7 @@ namespace PlasticityModel
                 {
                     // Kinematic hardening
                     backstress_tensor += gamma_kin * deviator(stress_tensor);
-                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
+                    stress_tensor -= backstress_tensor;
                 }
             }
 
@@ -192,7 +192,7 @@ namespace PlasticityModel
                 {
                     // Kinematic hardening
                     backstress_tensor += gamma_kin * unit_symmetric_tensor<dim>() * (sigma_max - sigma_min);
-                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
+                    stress_tensor -= backstress_tensor;
                 }
             }
 
@@ -571,6 +571,8 @@ namespace PlasticityModel
 
         const std::string base_mesh;
 
+        const double applied_displacement;
+
         const std::string yield_criteria;
         const std::string hardening_law;
 
@@ -637,6 +639,12 @@ namespace PlasticityModel
             "box",
             Patterns::Selection("box|half sphere"),
             "Select the shape of the domain: 'box' or 'half sphere'.");
+        // The following will control the displacement applied to the top face of the box
+        prm.declare_entry(
+            "applied displacement",
+            "-0.002",
+            Patterns::Double(),
+            "Applied displacement to the top of the box");
         // The following parameter is for the yield-criteria
         prm.declare_entry(
             "yield-criteria",
@@ -673,6 +681,8 @@ namespace PlasticityModel
           , constitutive_law(e_modulus, nu, sigma_0, gamma_iso, gamma_kin)
 
           , base_mesh(prm.get("base mesh"))
+
+          , applied_displacement(prm.get_double("applied displacement"))
 
           , yield_criteria(prm.get("yield-criteria"))
           , hardening_law(prm.get("hardening-law"))
@@ -827,7 +837,7 @@ namespace PlasticityModel
                 // top face
                 5,
                 // EquationData::BoundaryValues<dim>(),
-                Functions::ConstantFunction<dim>(-0.002, dim),
+                Functions::ConstantFunction<dim>(applied_displacement, dim),
                 constraints_dirichlet_and_hanging_nodes,
                 fe.component_mask(z_displacement));
 

@@ -3,5 +3,6 @@ set number of initial refinements = 1
 set number of cycles              = 5
 set refinement strategy           = percentage
 set output directory              = Tresca
+set applied displacement          = 0.1
 set yield-criteria                = Tresca
 set hardening-law                 = kinematic
