@@ -79,6 +79,7 @@ namespace PlasticityModel
 
         void get_linearized_stress_strain_tensors(
             const SymmetricTensor<2, dim>& strain_tensor,
+            SymmetricTensor<2, dim>& stress_tensor,
             SymmetricTensor<4, dim>& stress_strain_tensor_linearized,
             SymmetricTensor<4, dim>& stress_strain_tensor, std::string yield_criteria,
             std::string hardening_law) const;
@@ -210,6 +211,7 @@ namespace PlasticityModel
     template <int dim>
     void ConstitutiveLaw<dim>::get_linearized_stress_strain_tensors(
         const SymmetricTensor<2, dim>& strain_tensor,
+        SymmetricTensor<2, dim>& stress_tensor,
         SymmetricTensor<4, dim>& stress_strain_tensor_linearized,
         SymmetricTensor<4, dim>& stress_strain_tensor,
         std::string yield_criteria,
@@ -217,7 +219,6 @@ namespace PlasticityModel
     {
         Assert(dim == 3, ExcNotImplemented()); // checking if the code is being run in 3D
 
-        SymmetricTensor<2, dim> stress_tensor;
         stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
 
         stress_strain_tensor = stress_strain_tensor_mu;
@@ -530,6 +531,8 @@ namespace PlasticityModel
         void setup_system();
         void compute_dirichlet_constraints();
         void assemble_newton_system(const TrilinosWrappers::MPI::Vector& linearization_point);
+        void interpolate_stress_to_nodes(const std::vector<SymmetricTensor<2, dim>>& stress_at_q_points,
+            std::vector<SymmetricTensor<2, dim>>& stress_per_node, const Quadrature<dim>& quadrature_formula);
         void compute_nonlinear_residual(const TrilinosWrappers::MPI::Vector& linearization_point);
         void solve_newton_system();
         void solve_newton();
@@ -558,6 +561,8 @@ namespace PlasticityModel
 
         IndexSet active_set;  // not sure if this is needed for the plasticity code
         Vector<float> fraction_of_plastic_q_points_per_cell;
+
+        std::vector<SymmetricTensor<2, dim>> stress_at_q_points;
 
         TrilinosWrappers::SparseMatrix newton_matrix;
 
@@ -929,6 +934,8 @@ namespace PlasticityModel
 
         std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);  // initialize the local dof indices
 
+        std::vector<SymmetricTensor<2, dim>> stress_at_q_points(n_q_points);    // stores stress at each quadrature point
+
         const FEValuesExtractors::Vector displacement(0);
 
         for (const auto &cell : dof_handler.active_cell_iterators())
@@ -946,10 +953,15 @@ namespace PlasticityModel
                 {
                     SymmetricTensor<4, dim> stress_strain_tensor_linearized;
                     SymmetricTensor<4, dim> stress_strain_tensor;
+                    SymmetricTensor<2, dim> stress_tensor;
                     constitutive_law.get_linearized_stress_strain_tensors(
                         strain_tensor[q_point],
+                        stress_tensor,
                         stress_strain_tensor_linearized,
                         stress_strain_tensor, yield_criteria, hardening_law);
+
+                    // storing the stress at each quadrature point
+                    stress_at_q_points[q_point] = stress_tensor;
 
                     for (unsigned int i = 0; i < dofs_per_cell; ++i)
                     {
@@ -995,6 +1007,45 @@ namespace PlasticityModel
 
         newton_matrix.compress(VectorOperation::add);
         newton_rhs.compress(VectorOperation::add);
+    }
+
+
+    template <int dim>
+    void PlasticityProblem<dim>::interpolate_stress_to_nodes(
+        const std::vector<SymmetricTensor<2, dim>>& stress_at_q_points,
+        std::vector<SymmetricTensor<2, dim>>& stress_per_node,
+        const Quadrature<dim>& quadrature_formula)
+    {
+        FEValues<dim> fe_values(fe, quadrature_formula, update_values | update_gradients);
+
+        // Loop over all active cells
+        for (const auto &cell : dof_handler.active_cell_iterators())
+        {
+            if (cell->is_locally_owned())
+            {
+                fe_values.reinit(cell);
+
+                std::vector<types::global_dof_index> local_dof_indices(fe.n_dofs_per_cell());
+                cell->get_dof_indices(local_dof_indices);
+
+                // Ensure correct size of stress_at_q_points and stress_per_node
+                Assert(stress_at_q_points.size() == fe_values.n_quadrature_points, ExcInternalError());
+                Assert(stress_per_node.size() == dof_handler.n_dofs(), ExcInternalError());
+
+                for (unsigned int q_point = 0; q_point < fe_values.n_quadrature_points; ++q_point)
+                {
+                    for (unsigned int i = 0; i < local_dof_indices.size(); ++i)
+                    {
+                        // Ensure we are accessing the correct local DoF indices
+                        const unsigned int local_index = local_dof_indices[i];
+
+                        // Accumulate the interpolated stress
+                        stress_per_node[local_index] +=
+                            stress_at_q_points[q_point] * fe_values.shape_value(i, q_point);
+                    }
+                }
+            }
+        }
     }
 
 
@@ -1337,44 +1388,81 @@ namespace PlasticityModel
 
         pcout << "      Writing graphical output... " << std::flush;
 
-        // move the mesh to reflect the current deformation
+        // Move the mesh to reflect the current deformation
         move_mesh(solution);
 
         // Initialize DataOut object for output
         DataOut<dim> data_out;
-
-        // Attach the DoF handler to the DataOut object
         data_out.attach_dof_handler(dof_handler);
 
-        // add displacement to the data output
+        // Add displacement to the data output
         const std::vector<DataComponentInterpretation::DataComponentInterpretation>
             data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
-        data_out.add_data_vector(solution,
-                                 std::vector<std::string>(dim, "displacement"),
-                                 DataOut<dim>::type_dof_data,
-                                 data_component_interpretation);
-        // add the fraction of plastic quadrature points per cell to the data output
-        data_out.add_data_vector(fraction_of_plastic_q_points_per_cell,
-                                 "fraction_of_plastic_q_points");
+        data_out.add_data_vector(solution, std::vector<std::string>(dim, "displacement"), DataOut<dim>::type_dof_data, data_component_interpretation);
 
-        // add subdomain information to the data output
+        // Add the fraction of plastic quadrature points per cell to the data output
+        data_out.add_data_vector(fraction_of_plastic_q_points_per_cell, "fraction_of_plastic_q_points");
+
+        // Add subdomain information
         Vector<float> subdomain(triangulation.n_active_cells());
         for (unsigned int i = 0; i < subdomain.size(); ++i)
             subdomain(i) = triangulation.locally_owned_subdomain();
         data_out.add_data_vector(subdomain, "subdomain");
 
+        // Declare and initialize stress vectors
+        std::vector<SymmetricTensor<2, dim>> stress_per_node(dof_handler.n_dofs(), SymmetricTensor<2, dim>());
+        const QGauss<dim> quadrature_formula(fe.degree + 1);  // Quadrature order
+
+        // Interpolate stress to nodes
+        interpolate_stress_to_nodes(stress_at_q_points, stress_per_node, quadrature_formula);
+
+        /*
+        // Extract individual components
+        Vector<double> stress_xx(dof_handler.n_dofs());
+        Vector<double> stress_yy(dof_handler.n_dofs());
+        Vector<double> stress_xy(dof_handler.n_dofs());
+        Vector<double> stress_zz, stress_xz, stress_yz;
+        if (dim == 3) {
+            stress_zz.reinit(dof_handler.n_dofs());
+            stress_xz.reinit(dof_handler.n_dofs());
+            stress_yz.reinit(dof_handler.n_dofs());
+        }
+
+        for (unsigned int i = 0; i < stress_per_node.size(); ++i) {
+            stress_xx[i] = stress_per_node[i][0][0];  // σ_xx
+            stress_yy[i] = stress_per_node[i][1][1];  // σ_yy
+            stress_xy[i] = stress_per_node[i][0][1];  // σ_xy
+
+            if (dim == 3) {
+                stress_zz[i] = stress_per_node[i][2][2];  // σ_zz
+                stress_xz[i] = stress_per_node[i][0][2];  // σ_xz
+                stress_yz[i] = stress_per_node[i][1][2];  // σ_yz
+            }
+        }
+
+        // Add extracted components to DataOut
+        data_out.add_data_vector(stress_xx, "stress_xx");
+        data_out.add_data_vector(stress_yy, "stress_yy");
+        data_out.add_data_vector(stress_xy, "stress_xy");
+
+        if (dim == 3) {
+            data_out.add_data_vector(stress_zz, "stress_zz");
+            data_out.add_data_vector(stress_xz, "stress_xz");
+            data_out.add_data_vector(stress_yz, "stress_yz");
+        }
+        */
+
         // Build patches and write output files
         data_out.build_patches();
-        const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(
-            output_dir, "solution", current_refinement_cycle,
-            mpi_communicator, 2);
+        const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(output_dir, "solution", current_refinement_cycle, mpi_communicator, 2);
         pcout << pvtu_filename << std::endl;
 
-        // move the mesh back to its original position
+        // Move the mesh back to its original position
         TrilinosWrappers::MPI::Vector tmp(solution);
         tmp *= -1;
         move_mesh(tmp);
     }
+
 
 
     // The following function orchestrates the entire simulation. It manages mesh refinement, system solving
