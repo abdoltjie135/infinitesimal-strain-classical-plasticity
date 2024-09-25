@@ -514,6 +514,37 @@ namespace PlasticityModel
         }
     }
 
+    template <int dim, typename Number>
+    class PointHistory
+    {
+    public:
+        PointHistory() = default;
+        void setup(const SymmetricTensor<2, dim> &initial_stress);
+        SymmetricTensor<2, dim> get_stress() const;
+        void set_stress(const SymmetricTensor<2, dim> &stress);
+
+    private:
+        SymmetricTensor<2, dim> stress;
+    };
+
+    template <int dim, typename Number>
+    void PointHistory<dim, Number>::setup(const SymmetricTensor<2, dim> &initial_stress)
+    {
+        stress = initial_stress;
+    }
+
+    template <int dim, typename Number>
+    SymmetricTensor<2, dim> PointHistory<dim, Number>::get_stress() const
+    {
+        return stress;
+    }
+
+    template <int dim, typename Number>
+    void PointHistory<dim, Number>::set_stress(const SymmetricTensor<2, dim> &stress)
+    {
+        this->stress = stress;
+    }
+
 
     template <int dim>
     class PlasticityProblem
@@ -525,6 +556,8 @@ namespace PlasticityModel
         void run(); // function to run the simulation
 
         static void declare_parameters(ParameterHandler& prm);  // function to declare the parameters
+
+        std::vector<std::shared_ptr<PointHistory<dim, double>>> quadrature_point_history;
 
     private:
         void make_grid();
@@ -719,6 +752,25 @@ namespace PlasticityModel
         pcout << "    FE degree " << fe_degree << std::endl;
         pcout << "    transfer solution " << (transfer_solution ? "true" : "false")
             << std::endl;
+
+        // Initialize the quadrature formula
+        const QGauss<dim> quadrature_formula(fe_degree + 1);
+
+        // Initializing quadrature point history
+        quadrature_point_history.resize(triangulation.n_active_cells() * quadrature_formula.size());
+
+        unsigned int history_index = 0;
+        for (const auto &cell : triangulation.active_cell_iterators())
+        {
+            if (cell->is_locally_owned())
+            {
+                for (unsigned int q = 0; q < quadrature_formula.size(); ++q)
+                {
+                    quadrature_point_history[history_index] = std::make_shared<PointHistory<dim, double>>();
+                    ++history_index;
+                }
+            }
+        }
     }
 
     // The following is used to rotate the half-sphere
@@ -903,117 +955,91 @@ namespace PlasticityModel
 
 
     template <int dim>
-    void PlasticityProblem<dim>::assemble_newton_system(
-        const TrilinosWrappers::MPI::Vector& linearization_point)
+    void PlasticityProblem<dim>::assemble_newton_system(const TrilinosWrappers::MPI::Vector &linearization_point)
     {
         TimerOutput::Scope t(computing_timer, "Assembling");
 
-        const QGauss<dim> quadrature_formula(fe.degree + 1);
-        const QGauss<dim - 1> face_quadrature_formula(fe.degree + 1);
+        const QGauss<dim> quadrature_formula(fe_degree + 1);  // Use fe_degree for quadrature formula
+        const QGauss<dim - 1> face_quadrature_formula(fe_degree + 1);
 
-        FEValues<dim> fe_values(fe,
-                                quadrature_formula,
-                                update_values | update_gradients |
-                                update_JxW_values);
+        FEValues<dim> fe_values(fe, quadrature_formula,
+                                update_values | update_gradients | update_JxW_values);
 
-        FEFaceValues<dim> fe_values_face(fe,
-                                         face_quadrature_formula,
-                                         update_values | update_quadrature_points |
-                                         update_JxW_values);
+        FEFaceValues<dim> fe_values_face(fe, face_quadrature_formula,
+                                         update_values | update_quadrature_points | update_JxW_values);
 
         const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
         const unsigned int n_q_points = quadrature_formula.size();
-        const unsigned int n_face_q_points = face_quadrature_formula.size();
-
-        const EquationData::BoundaryForce<dim> boundary_force;
-        std::vector<Vector<double>> boundary_force_values(n_face_q_points,
-                                                          Vector<double>(dim));
 
         FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
         Vector<double> cell_rhs(dofs_per_cell);
 
-        std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);  // initialize the local dof indices
+        std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+        std::vector<SymmetricTensor<2, dim>> strain_tensor(n_q_points);
 
-        std::vector<SymmetricTensor<2, dim>> stress_at_q_points(n_q_points);    // stores stress at each quadrature point
+        // Create a stress storage for each quadrature point
+        std::vector<SymmetricTensor<2, dim>> stress_at_q_points(n_q_points);
 
         const FEValuesExtractors::Vector displacement(0);
 
         for (const auto &cell : dof_handler.active_cell_iterators())
+        {
             if (cell->is_locally_owned())
             {
                 fe_values.reinit(cell);
                 cell_matrix = 0;
                 cell_rhs = 0;
 
-                std::vector<SymmetricTensor<2, dim>> strain_tensor(n_q_points);
-                fe_values[displacement].get_function_symmetric_gradients(
-                    linearization_point, strain_tensor);
+                // Get strains at each quadrature point
+                fe_values[displacement].get_function_symmetric_gradients(linearization_point, strain_tensor);
+
+                // Retrieve the quadrature point history for this cell
+                unsigned int cell_index = cell->active_cell_index() * n_q_points;
 
                 for (unsigned int q_point = 0; q_point < n_q_points; ++q_point)
                 {
                     SymmetricTensor<4, dim> stress_strain_tensor_linearized;
                     SymmetricTensor<4, dim> stress_strain_tensor;
                     SymmetricTensor<2, dim> stress_tensor;
-                    constitutive_law.get_linearized_stress_strain_tensors(
-                        strain_tensor[q_point],
-                        stress_tensor,
-                        stress_strain_tensor_linearized,
-                        stress_strain_tensor, yield_criteria, hardening_law);
 
-                    // storing the stress at each quadrature point
-                    stress_at_q_points[q_point] = stress_tensor;
+                    // Compute the stress using the constitutive law
+                    constitutive_law.get_linearized_stress_strain_tensors(
+                        strain_tensor[q_point], stress_tensor, stress_strain_tensor_linearized, stress_strain_tensor, yield_criteria, hardening_law);
+
+                    // Store the computed stress in the PointHistory
+                    quadrature_point_history[cell_index + q_point]->set_stress(stress_tensor);
 
                     for (unsigned int i = 0; i < dofs_per_cell; ++i)
                     {
                         const SymmetricTensor<2, dim> stress_phi_i =
-                            stress_strain_tensor_linearized *
-                            fe_values[displacement].symmetric_gradient(i, q_point);
+                            stress_strain_tensor_linearized * fe_values[displacement].symmetric_gradient(i, q_point);
 
                         for (unsigned int j = 0; j < dofs_per_cell; ++j)
                         {
-                            cell_matrix(i, j) +=
-                            (stress_phi_i *
-                                fe_values[displacement].symmetric_gradient(j, q_point) *
-                                fe_values.JxW(q_point));
+                            cell_matrix(i, j) += (stress_phi_i * fe_values[displacement].symmetric_gradient(j, q_point) * fe_values.JxW(q_point));
                         }
 
-                        cell_rhs(i) +=
-                        ((stress_phi_i -
-                                stress_strain_tensor *
-                                fe_values[displacement].symmetric_gradient(i,
-                                                                           q_point)) *
-                            strain_tensor[q_point] * fe_values.JxW(q_point));
+                        cell_rhs(i) += ((stress_phi_i - stress_strain_tensor * fe_values[displacement].symmetric_gradient(i, q_point)) * strain_tensor[q_point] * fe_values.JxW(q_point));
                     }
                 }
 
+                // Get the degrees of freedom indices and distribute local to global
                 cell->get_dof_indices(local_dof_indices);
-
-                // attempt to distribute local to global
-                try {
-                    all_constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices,
-                        newton_matrix, newton_rhs, true);
-                } catch (std::exception &e) {
-                    std::cerr << "Exception during distribute_local_to_global: " << e.what() << std::endl;
-                    throw;
-                }
-
-                all_constraints.distribute_local_to_global(cell_matrix,
-                                                           cell_rhs,
-                                                           local_dof_indices,
-                                                           newton_matrix,
-                                                           newton_rhs,
-                                                           true);
+                all_constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices, newton_matrix, newton_rhs, true);
             }
+        }
 
+        // Compress the matrix and right-hand side vector
         newton_matrix.compress(VectorOperation::add);
         newton_rhs.compress(VectorOperation::add);
     }
 
 
+
     template <int dim>
-    void PlasticityProblem<dim>::interpolate_stress_to_nodes(
+    void PlasticityProblem<dim>::interpolate_stress_to_nodes(  // the purpose of this fun
         const std::vector<SymmetricTensor<2, dim>>& stress_at_q_points,
-        std::vector<SymmetricTensor<2, dim>>& stress_per_node,
+        std::vector<SymmetricTensor<2, dim>>& stress_per_node,  // use deal.ii vector class instead for datatype
         const Quadrature<dim>& quadrature_formula)
     {
         FEValues<dim> fe_values(fe, quadrature_formula, update_values | update_gradients);
@@ -1385,84 +1411,59 @@ namespace PlasticityModel
     void PlasticityProblem<dim>::output_results(const unsigned int current_refinement_cycle)
     {
         TimerOutput::Scope t(computing_timer, "Graphical output");
-
         pcout << "      Writing graphical output... " << std::flush;
 
-        // Move the mesh to reflect the current deformation
+        // Move mesh
         move_mesh(solution);
 
-        // Initialize DataOut object for output
         DataOut<dim> data_out;
         data_out.attach_dof_handler(dof_handler);
 
-        // Add displacement to the data output
+        const QGauss<dim> quadrature_formula(fe.degree + 1);
+
+        MappingQ1<dim> mapping;
+
         const std::vector<DataComponentInterpretation::DataComponentInterpretation>
             data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
-        data_out.add_data_vector(solution, std::vector<std::string>(dim, "displacement"), DataOut<dim>::type_dof_data, data_component_interpretation);
 
-        // Add the fraction of plastic quadrature points per cell to the data output
+        data_out.add_data_vector(solution, std::vector<std::string>(dim, "displacement"),
+                                 DataOut<dim>::type_dof_data, data_component_interpretation);
         data_out.add_data_vector(fraction_of_plastic_q_points_per_cell, "fraction_of_plastic_q_points");
 
-        // Add subdomain information
-        Vector<float> subdomain(triangulation.n_active_cells());
-        for (unsigned int i = 0; i < subdomain.size(); ++i)
-            subdomain(i) = triangulation.locally_owned_subdomain();
-        data_out.add_data_vector(subdomain, "subdomain");
+        // Use PointHistory to get stress at each quadrature point
+        std::vector<Vector<double>> cauchy_stress(0.5 * (dim + 1) * dim, Vector<double>(dof_handler.n_dofs()));
 
-        // Declare and initialize stress vectors
-        std::vector<SymmetricTensor<2, dim>> stress_per_node(dof_handler.n_dofs(), SymmetricTensor<2, dim>());
-        const QGauss<dim> quadrature_formula(fe.degree + 1);  // Quadrature order
-
-        // Interpolate stress to nodes
-        interpolate_stress_to_nodes(stress_at_q_points, stress_per_node, quadrature_formula);
-
-        /*
-        // Extract individual components
-        Vector<double> stress_xx(dof_handler.n_dofs());
-        Vector<double> stress_yy(dof_handler.n_dofs());
-        Vector<double> stress_xy(dof_handler.n_dofs());
-        Vector<double> stress_zz, stress_xz, stress_yz;
-        if (dim == 3) {
-            stress_zz.reinit(dof_handler.n_dofs());
-            stress_xz.reinit(dof_handler.n_dofs());
-            stress_yz.reinit(dof_handler.n_dofs());
-        }
-
-        for (unsigned int i = 0; i < stress_per_node.size(); ++i) {
-            stress_xx[i] = stress_per_node[i][0][0];  // σ_xx
-            stress_yy[i] = stress_per_node[i][1][1];  // σ_yy
-            stress_xy[i] = stress_per_node[i][0][1];  // σ_xy
-
-            if (dim == 3) {
-                stress_zz[i] = stress_per_node[i][2][2];  // σ_zz
-                stress_xz[i] = stress_per_node[i][0][2];  // σ_xz
-                stress_yz[i] = stress_per_node[i][1][2];  // σ_yz
+        for (int i = 0; i < dim; ++i)
+            for (int j = i; j < dim; ++j)
+            {
+                VectorTools::project(mapping, dof_handler, all_constraints, quadrature_formula,
+                                     [&](const typename DoFHandler<dim>::active_cell_iterator &cell, const unsigned int q_point) -> double
+                                     {
+                                         unsigned int local_index = cell->active_cell_index() * quadrature_formula.size();
+                                         const std::shared_ptr<PointHistory<dim, double>> &lqph = quadrature_point_history[local_index + q_point];
+                                         const SymmetricTensor<2, dim> &T = lqph->get_stress();
+                                         return T[i][j];
+                                     },
+                                     cauchy_stress[i + j]);
             }
-        }
 
-        // Add extracted components to DataOut
-        data_out.add_data_vector(stress_xx, "stress_xx");
-        data_out.add_data_vector(stress_yy, "stress_yy");
-        data_out.add_data_vector(stress_xy, "stress_xy");
+        // Add stress to output
+        for (int i = 0; i < dim; ++i)
+            for (int j = i; j < dim; ++j)
+            {
+                std::string name = "stress_" + std::to_string(i) + std::to_string(j);
+                data_out.add_data_vector(cauchy_stress[i + j], name);
+            }
 
-        if (dim == 3) {
-            data_out.add_data_vector(stress_zz, "stress_zz");
-            data_out.add_data_vector(stress_xz, "stress_xz");
-            data_out.add_data_vector(stress_yz, "stress_yz");
-        }
-        */
-
-        // Build patches and write output files
         data_out.build_patches();
         const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(output_dir, "solution", current_refinement_cycle, mpi_communicator, 2);
         pcout << pvtu_filename << std::endl;
 
-        // Move the mesh back to its original position
+        // Move mesh back
         TrilinosWrappers::MPI::Vector tmp(solution);
         tmp *= -1;
         move_mesh(tmp);
     }
-
 
 
     // The following function orchestrates the entire simulation. It manages mesh refinement, system solving
