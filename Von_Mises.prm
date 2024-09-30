@@ -1,6 +1,6 @@
 set polynomial degree             = 1
-set number of initial refinements = 1
-set number of cycles              = 5
+set number of initial refinements = 4
+set number of cycles              = 1
 set refinement strategy           = percentage
 set output directory              = Von_Mises
 set applied displacement          = 0.1

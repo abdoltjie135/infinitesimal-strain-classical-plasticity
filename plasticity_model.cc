@@ -1,8 +1,8 @@
 /* Author: Abdul Gafeeth Benjamin
  * Date: 23/08/2024
  * Location: Cape Town, South Africa
- * Description: This file contains the implementation of the plasticity model
- *              and is for partial completion of MEC 5068Z
+ * Description: This file contains the implementation of a plasticity model
+ *              and is for the partial completion of MEC 5068Z
  */
 
 
@@ -527,6 +527,7 @@ namespace PlasticityModel
         SymmetricTensor<2, dim> stress;
     };
 
+    // TODO: I am not sure if the following function is needed
     template <int dim, typename Number>
     void PointHistory<dim, Number>::setup(const SymmetricTensor<2, dim> &initial_stress)
     {
@@ -557,15 +558,13 @@ namespace PlasticityModel
 
         static void declare_parameters(ParameterHandler& prm);  // function to declare the parameters
 
-        std::vector<std::shared_ptr<PointHistory<dim, double>>> quadrature_point_history;
+        std::vector<std::shared_ptr<PointHistory<dim, double>>> quadrature_point_history;  // should be private
 
     private:
         void make_grid();
         void setup_system();
         void compute_dirichlet_constraints();
         void assemble_newton_system(const TrilinosWrappers::MPI::Vector& linearization_point);
-        void interpolate_stress_to_nodes(const std::vector<SymmetricTensor<2, dim>>& stress_at_q_points,
-            std::vector<SymmetricTensor<2, dim>>& stress_per_node, const Quadrature<dim>& quadrature_formula);
         void compute_nonlinear_residual(const TrilinosWrappers::MPI::Vector& linearization_point);
         void solve_newton_system();
         void solve_newton();
@@ -583,14 +582,19 @@ namespace PlasticityModel
 
         const unsigned int fe_degree;
         const FESystem<dim> fe;
+        const FE_Q<dim> fe_scalar;
         DoFHandler<dim> dof_handler;
+        DoFHandler<dim> dof_handler_scalar;
 
         IndexSet locally_owned_dofs;
+        IndexSet locally_owned_scalar_dofs;
         IndexSet locally_relevant_dofs;
+        IndexSet locally_relevant_scalar_dofs;
 
         AffineConstraints<double> constraints_hanging_nodes;
         AffineConstraints<double> constraints_dirichlet_and_hanging_nodes;
         AffineConstraints<double> all_constraints;
+        AffineConstraints<double> scalar_constraints;
 
         IndexSet active_set;  // not sure if this is needed for the plasticity code
         Vector<float> fraction_of_plastic_q_points_per_cell;
@@ -709,7 +713,9 @@ namespace PlasticityModel
           , triangulation(mpi_communicator)
           , fe_degree(prm.get_integer("polynomial degree"))
           , fe(FE_Q<dim>(QGaussLobatto<1>(fe_degree + 1)) ^ dim)
+          , fe_scalar(fe_degree)
           , dof_handler(triangulation)
+          , dof_handler_scalar(triangulation)
 
           , e_modulus(200000)
           , nu(0.3)
@@ -753,24 +759,7 @@ namespace PlasticityModel
         pcout << "    transfer solution " << (transfer_solution ? "true" : "false")
             << std::endl;
 
-        // Initialize the quadrature formula
-        const QGauss<dim> quadrature_formula(fe_degree + 1);
 
-        // Initializing quadrature point history
-        quadrature_point_history.resize(triangulation.n_active_cells() * quadrature_formula.size());
-
-        unsigned int history_index = 0;
-        for (const auto &cell : triangulation.active_cell_iterators())
-        {
-            if (cell->is_locally_owned())
-            {
-                for (unsigned int q = 0; q < quadrature_formula.size(); ++q)
-                {
-                    quadrature_point_history[history_index] = std::make_shared<PointHistory<dim, double>>();
-                    ++history_index;
-                }
-            }
-        }
     }
 
     // The following is used to rotate the half-sphere
@@ -813,13 +802,17 @@ namespace PlasticityModel
     template <int dim>
     void PlasticityProblem<dim>::setup_system()
     {
+        pcout << "Setting up system..." << std::endl;
         // setup dofs and get index sets for locally owned and relevant DoFs
         {
             TimerOutput::Scope t(computing_timer, "Setup: distribute DoFs");
             dof_handler.distribute_dofs(fe);
+            dof_handler_scalar.distribute_dofs(fe_scalar);
 
             locally_owned_dofs = dof_handler.locally_owned_dofs();
+            locally_owned_scalar_dofs = dof_handler_scalar.locally_owned_dofs();
             locally_relevant_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler);
+            locally_relevant_scalar_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler_scalar);
             // DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
         }
 
@@ -827,6 +820,7 @@ namespace PlasticityModel
         {
             TimerOutput::Scope t(computing_timer, "Setup: constraints");
             constraints_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
+            scalar_constraints.reinit(locally_owned_scalar_dofs, locally_relevant_scalar_dofs);
             // constraints_dirichlet_and_hanging_nodes.reinit(locally_relevant_dofs);
             DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
 
@@ -840,10 +834,12 @@ namespace PlasticityModel
 
             all_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);
             all_constraints.close();
+            // scalar_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);  // not sure if this is needed
+            scalar_constraints.close();
 
             constraints_hanging_nodes.close();
             constraints_dirichlet_and_hanging_nodes.close();
-            all_constraints.close();
+
         }
 
         // Initialization of the vectors and the active set
@@ -871,6 +867,27 @@ namespace PlasticityModel
             sp.compress();
             newton_matrix.reinit(sp);
         }
+        // Initialize the quadrature formula
+        const QGauss<dim> quadrature_formula(fe_degree + 1);
+
+        pcout<<"Initializing quadrature point history..."<<std::endl;
+        // Initializing quadrature point history
+        quadrature_point_history.resize(triangulation.n_active_cells() * quadrature_formula.size());
+        pcout<<"Quadrature point history resized."<<std::endl;
+
+        unsigned int history_index = 0;
+        for (const auto &cell : triangulation.active_cell_iterators())
+        {
+            if (cell->is_locally_owned())
+            {
+                for (unsigned int q = 0; q < quadrature_formula.size(); ++q)
+                {
+                    quadrature_point_history[history_index] = std::make_shared<PointHistory<dim, double>>();
+                    ++history_index;
+                }
+            }
+        }
+        pcout<<"Quadrature point history initialized."<<std::endl;
     }
 
 
@@ -1032,46 +1049,6 @@ namespace PlasticityModel
         // Compress the matrix and right-hand side vector
         newton_matrix.compress(VectorOperation::add);
         newton_rhs.compress(VectorOperation::add);
-    }
-
-
-
-    template <int dim>
-    void PlasticityProblem<dim>::interpolate_stress_to_nodes(  // the purpose of this fun
-        const std::vector<SymmetricTensor<2, dim>>& stress_at_q_points,
-        std::vector<SymmetricTensor<2, dim>>& stress_per_node,  // use deal.ii vector class instead for datatype
-        const Quadrature<dim>& quadrature_formula)
-    {
-        FEValues<dim> fe_values(fe, quadrature_formula, update_values | update_gradients);
-
-        // Loop over all active cells
-        for (const auto &cell : dof_handler.active_cell_iterators())
-        {
-            if (cell->is_locally_owned())
-            {
-                fe_values.reinit(cell);
-
-                std::vector<types::global_dof_index> local_dof_indices(fe.n_dofs_per_cell());
-                cell->get_dof_indices(local_dof_indices);
-
-                // Ensure correct size of stress_at_q_points and stress_per_node
-                Assert(stress_at_q_points.size() == fe_values.n_quadrature_points, ExcInternalError());
-                Assert(stress_per_node.size() == dof_handler.n_dofs(), ExcInternalError());
-
-                for (unsigned int q_point = 0; q_point < fe_values.n_quadrature_points; ++q_point)
-                {
-                    for (unsigned int i = 0; i < local_dof_indices.size(); ++i)
-                    {
-                        // Ensure we are accessing the correct local DoF indices
-                        const unsigned int local_index = local_dof_indices[i];
-
-                        // Accumulate the interpolated stress
-                        stress_per_node[local_index] +=
-                            stress_at_q_points[q_point] * fe_values.shape_value(i, q_point);
-                    }
-                }
-            }
-        }
     }
 
 
@@ -1418,6 +1395,8 @@ namespace PlasticityModel
 
         DataOut<dim> data_out;
         data_out.attach_dof_handler(dof_handler);
+        DataOut<dim> data_out_scalar;
+        data_out_scalar.attach_dof_handler(dof_handler_scalar);
 
         const QGauss<dim> quadrature_formula(fe.degree + 1);
 
@@ -1431,12 +1410,16 @@ namespace PlasticityModel
         data_out.add_data_vector(fraction_of_plastic_q_points_per_cell, "fraction_of_plastic_q_points");
 
         // Use PointHistory to get stress at each quadrature point
-        std::vector<Vector<double>> cauchy_stress(0.5 * (dim + 1) * dim, Vector<double>(dof_handler.n_dofs()));
+        // Check applicability of the vectors for shared memory
+        std::vector<Vector<double>> cauchy_stress(0.5 * (dim + 1) * dim, Vector<double>(dof_handler_scalar.n_dofs()));
+
+        // TODO: This is a bit of a hack, but it works for now but needs to be adjusted
+        unsigned int p = 0;
 
         for (int i = 0; i < dim; ++i)
             for (int j = i; j < dim; ++j)
             {
-                VectorTools::project(mapping, dof_handler, all_constraints, quadrature_formula,
+                VectorTools::project(mapping, dof_handler_scalar, scalar_constraints, quadrature_formula,
                                      [&](const typename DoFHandler<dim>::active_cell_iterator &cell, const unsigned int q_point) -> double
                                      {
                                          unsigned int local_index = cell->active_cell_index() * quadrature_formula.size();
@@ -1444,19 +1427,26 @@ namespace PlasticityModel
                                          const SymmetricTensor<2, dim> &T = lqph->get_stress();
                                          return T[i][j];
                                      },
-                                     cauchy_stress[i + j]);
+                                     cauchy_stress[p]);
+                ++p;
             }
 
         // Add stress to output
+        p = 0;
         for (int i = 0; i < dim; ++i)
             for (int j = i; j < dim; ++j)
             {
                 std::string name = "stress_" + std::to_string(i) + std::to_string(j);
-                data_out.add_data_vector(cauchy_stress[i + j], name);
+                data_out_scalar.add_data_vector(cauchy_stress[p], name);
+                // data_out.add_data_vector(cauchy_stress[p], name);
+                ++p;
             }
 
-        data_out.build_patches();
-        const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(output_dir, "solution", current_refinement_cycle, mpi_communicator, 2);
+        // TODO: All data needs to be outputted to the same mesh
+        // data_out.build_patches();
+        // const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(output_dir, "solution", current_refinement_cycle, mpi_communicator, 2);
+        data_out_scalar.build_patches();
+        const std::string pvtu_filename = data_out_scalar.write_vtu_with_pvtu_record(output_dir, "solution", current_refinement_cycle, mpi_communicator, 2);
         pcout << pvtu_filename << std::endl;
 
         // Move mesh back
@@ -1493,8 +1483,6 @@ namespace PlasticityModel
                     refine_grid();
                 }
             }
-
-            output_results(current_refinement_cycle);
 
             solve_newton();
 
