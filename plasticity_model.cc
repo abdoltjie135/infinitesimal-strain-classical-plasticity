@@ -300,157 +300,6 @@ namespace PlasticityModel
     }
 
 
-    /*
-    // The following function calculates the stress-strain tensor based on the strain tensor and
-    // returns whether the material has yielded or not (true if it has yielded, false otherwise)
-    template <int dim>
-    bool ConstitutiveLaw<dim>::get_stress_strain_tensor(
-        const SymmetricTensor<2, dim>& strain_tensor,
-        SymmetricTensor<4, dim>& stress_strain_tensor, std::string yield_criteria) const
-    {
-        Assert(dim == 3, ExcNotImplemented());
-
-        SymmetricTensor<2, dim> stress_tensor;
-        stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
-
-        // Check the value of the yield_criteria string
-        if (yield_criteria == "Von-Mises")
-        {
-            const SymmetricTensor<2, dim> deviator_stress_tensor = deviator(stress_tensor);
-
-            // Von Mises yield criterion
-            const double deviator_stress_tensor_norm = deviator_stress_tensor.norm();
-            stress_strain_tensor = stress_strain_tensor_mu;
-
-            if (deviator_stress_tensor_norm > sigma_0)
-            {
-                const double beta = sigma_0 / deviator_stress_tensor_norm;
-                stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
-            }
-
-            stress_strain_tensor += stress_strain_tensor_kappa;
-
-            return (deviator_stress_tensor_norm > sigma_0); // Von Mises yield check
-        }
-        else if (yield_criteria == "Tresca")
-        {
-            // Tresca yield criterion
-            // Compute principal stresses
-
-            auto principal_stresses = eigenvalues(stress_tensor);
-            std::sort(principal_stresses.begin(), principal_stresses.end());
-            // principal_stresses.sort(std::greater<double>());
-
-            // Find the maximum and minimum principal stresses
-            const double sigma_max = principal_stresses[dim - 1];
-            const double sigma_min = principal_stresses[0];
-
-            // const auto principal_stresses = eigenvalues(stress_tensor);
-            //
-            // // Find the maximum and minimum principal stresses
-            // const double sigma_max = std::max_element(principal_stresses.begin(), principal_stresses.end());
-            // const double sigma_min = std::min_element(principal_stresses.begin(), principal_stresses.end());
-
-            // Compute maximum shear stress for Tresca
-            const double max_shear_stress = 0.5 * (sigma_max - sigma_min);
-            stress_strain_tensor = stress_strain_tensor_mu;
-
-            if (max_shear_stress > (sigma_0 / 2))
-            {
-                const double beta = (sigma_0 / 2) / max_shear_stress;
-                stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
-            }
-
-            stress_strain_tensor += stress_strain_tensor_kappa;
-
-            return (max_shear_stress > (sigma_0 / 2)); // Tresca yield check
-        }
-        else
-        {
-            AssertThrow(false, ExcNotImplemented());
-        }
-    }
-
-
-    template <int dim>
-    void ConstitutiveLaw<dim>::get_linearized_stress_strain_tensors(
-        const SymmetricTensor<2, dim>& strain_tensor,
-        SymmetricTensor<4, dim>& stress_strain_tensor_linearized,
-        SymmetricTensor<4, dim>& stress_strain_tensor, std::string yield_criteria) const
-    {
-        Assert(dim == 3, ExcNotImplemented()); // checking if the code is being run in 3D
-
-        SymmetricTensor<2, dim> stress_tensor;
-        stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
-
-        stress_strain_tensor = stress_strain_tensor_mu;
-        stress_strain_tensor_linearized = stress_strain_tensor_mu;
-
-        if (yield_criteria == "Von-Mises")
-        {
-            // Von Mises criterion
-            SymmetricTensor<2, dim> deviator_stress_tensor = deviator(stress_tensor);
-            const double deviator_stress_tensor_norm = deviator_stress_tensor.norm();
-
-            if (deviator_stress_tensor_norm > sigma_0)
-            {
-                const double beta = sigma_0 / deviator_stress_tensor_norm;
-                stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
-                stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
-
-                deviator_stress_tensor /= deviator_stress_tensor_norm;
-
-                stress_strain_tensor_linearized -=
-                    (1 - gamma_iso) * beta * 2 * mu * outer_product(deviator_stress_tensor, deviator_stress_tensor);
-            }
-
-            stress_strain_tensor += stress_strain_tensor_kappa;
-            stress_strain_tensor_linearized += stress_strain_tensor_kappa;
-        }
-        else if (yield_criteria == "Tresca")
-        {
-            // Tresca yield criterion
-            // Compute principal stresses
-            auto principal_stresses = eigenvalues(stress_tensor);
-            std::sort(principal_stresses.begin(), principal_stresses.end());
-            // principal_stresses.sort(std::greater<double>());
-
-            // Find the maximum and minimum principal stresses
-            const double sigma_max = principal_stresses[dim - 1];
-            const double sigma_min = principal_stresses[0];
-            // const double sigma_max = std::max_element(principal_stresses.begin(), principal_stresses.end());
-            // const double sigma_min = std::min_element(principal_stresses.begin(), principal_stresses.end());
-
-            // Compute maximum shear stress for Tresca
-            const double max_shear_stress = 0.5 * (sigma_max - sigma_min);
-
-            if (max_shear_stress > (sigma_0 / 2))
-            {
-                const double beta = (sigma_0 / 2) / max_shear_stress;
-                stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
-                stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
-
-                // Instead of normalized deviatoric stress, focus on principal stress behavior
-                SymmetricTensor<2, dim> principal_stress_tensor;
-                for (unsigned int i = 0; i < principal_stresses.size(); ++i)
-                    principal_stress_tensor[i][i] = principal_stresses[i];
-
-                // Linearize based on the principal stresses
-                stress_strain_tensor_linearized -=
-                    (1 - gamma_iso) * beta * 2 * mu * outer_product(principal_stress_tensor, principal_stress_tensor);
-            }
-
-            stress_strain_tensor += stress_strain_tensor_kappa;
-            stress_strain_tensor_linearized += stress_strain_tensor_kappa;
-        }
-        else
-        {
-            AssertThrow(false, ExcNotImplemented());
-        }
-    }
-    */
-
-
     namespace EquationData
     {
         template <int dim>
@@ -514,6 +363,7 @@ namespace PlasticityModel
         }
     }
 
+    // TODO: This needs to be setup to work with multiple cycles
     template <int dim, typename Number>
     class PointHistory
     {
@@ -558,8 +408,6 @@ namespace PlasticityModel
 
         static void declare_parameters(ParameterHandler& prm);  // function to declare the parameters
 
-        std::vector<std::shared_ptr<PointHistory<dim, double>>> quadrature_point_history;  // should be private
-
     private:
         void make_grid();
         void setup_system();
@@ -579,6 +427,8 @@ namespace PlasticityModel
         const unsigned int n_initial_global_refinements;
         parallel::distributed::Triangulation<dim> triangulation;  // distributing the mesh across multiple processors
                                                                   // for parallel computing
+
+        std::vector<std::shared_ptr<PointHistory<dim, double>>> quadrature_point_history;
 
         const unsigned int fe_degree;
         const FESystem<dim> fe;
@@ -607,6 +457,9 @@ namespace PlasticityModel
         TrilinosWrappers::MPI::Vector newton_rhs;
         TrilinosWrappers::MPI::Vector newton_rhs_uncondensed;
         TrilinosWrappers::MPI::Vector diag_mass_matrix_vector;
+        TrilinosWrappers::MPI::Vector stress_tensor_diagonal;
+        TrilinosWrappers::MPI::Vector stress_tensor_off_diagonal;
+        TrilinosWrappers::MPI::Vector stress_tensor_tmp;
 
         const double e_modulus, nu, gamma_iso, gamma_kin, sigma_0;
         ConstitutiveLaw<dim> constitutive_law;
@@ -714,8 +567,10 @@ namespace PlasticityModel
           , fe_degree(prm.get_integer("polynomial degree"))
           , fe(FE_Q<dim>(QGaussLobatto<1>(fe_degree + 1)) ^ dim)
           , fe_scalar(fe_degree)
+          // , fe_system(FE_Q<dim>(QGaussLobatto<1>(fe_degree + 1)) ^ (dim + 0.5 * dim * (dim + 1)))
           , dof_handler(triangulation)
           , dof_handler_scalar(triangulation)
+          // , dof_handler_system(triangulation)
 
           , e_modulus(200000)
           , nu(0.3)
@@ -813,7 +668,6 @@ namespace PlasticityModel
             locally_owned_scalar_dofs = dof_handler_scalar.locally_owned_dofs();
             locally_relevant_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler);
             locally_relevant_scalar_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler_scalar);
-            // DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
         }
 
         // setup hanging nodes and Dirichlet constraints
@@ -821,7 +675,6 @@ namespace PlasticityModel
             TimerOutput::Scope t(computing_timer, "Setup: constraints");
             constraints_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
             scalar_constraints.reinit(locally_owned_scalar_dofs, locally_relevant_scalar_dofs);
-            // constraints_dirichlet_and_hanging_nodes.reinit(locally_relevant_dofs);
             DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
 
 
@@ -834,12 +687,10 @@ namespace PlasticityModel
 
             all_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);
             all_constraints.close();
-            // scalar_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);  // not sure if this is needed
             scalar_constraints.close();
 
             constraints_hanging_nodes.close();
             constraints_dirichlet_and_hanging_nodes.close();
-
         }
 
         // Initialization of the vectors and the active set
@@ -850,6 +701,9 @@ namespace PlasticityModel
             newton_rhs_uncondensed.reinit(locally_owned_dofs, mpi_communicator);
             diag_mass_matrix_vector.reinit(locally_owned_dofs, mpi_communicator);
             fraction_of_plastic_q_points_per_cell.reinit(triangulation.n_active_cells());
+            stress_tensor_diagonal.reinit(locally_owned_dofs, mpi_communicator);
+            stress_tensor_off_diagonal.reinit(locally_owned_dofs, mpi_communicator);
+            stress_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
         }
 
         // Initialize the matrix structures that will be used in the simulation
@@ -896,7 +750,6 @@ namespace PlasticityModel
     void PlasticityProblem<dim>::compute_dirichlet_constraints()
     {
         constraints_dirichlet_and_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
-        // constraints_dirichlet_and_hanging_nodes.reinit(locally_relevant_dofs);
         constraints_dirichlet_and_hanging_nodes.merge(constraints_hanging_nodes);
 
         if (base_mesh == "box")
@@ -1021,7 +874,8 @@ namespace PlasticityModel
 
                     // Compute the stress using the constitutive law
                     constitutive_law.get_linearized_stress_strain_tensors(
-                        strain_tensor[q_point], stress_tensor, stress_strain_tensor_linearized, stress_strain_tensor, yield_criteria, hardening_law);
+                        strain_tensor[q_point], stress_tensor, stress_strain_tensor_linearized,
+                        stress_strain_tensor, yield_criteria, hardening_law);
 
                     // Store the computed stress in the PointHistory
                     quadrature_point_history[cell_index + q_point]->set_stress(stress_tensor);
@@ -1029,20 +883,26 @@ namespace PlasticityModel
                     for (unsigned int i = 0; i < dofs_per_cell; ++i)
                     {
                         const SymmetricTensor<2, dim> stress_phi_i =
-                            stress_strain_tensor_linearized * fe_values[displacement].symmetric_gradient(i, q_point);
+                            stress_strain_tensor_linearized *
+                                fe_values[displacement].symmetric_gradient(i, q_point);
 
                         for (unsigned int j = 0; j < dofs_per_cell; ++j)
                         {
-                            cell_matrix(i, j) += (stress_phi_i * fe_values[displacement].symmetric_gradient(j, q_point) * fe_values.JxW(q_point));
+                            cell_matrix(i, j) += (stress_phi_i *
+                                fe_values[displacement].symmetric_gradient(j, q_point) *
+                                fe_values.JxW(q_point));
                         }
 
-                        cell_rhs(i) += ((stress_phi_i - stress_strain_tensor * fe_values[displacement].symmetric_gradient(i, q_point)) * strain_tensor[q_point] * fe_values.JxW(q_point));
+                        cell_rhs(i) += ((stress_phi_i - stress_strain_tensor *
+                            fe_values[displacement].symmetric_gradient(i, q_point)) *
+                            strain_tensor[q_point] * fe_values.JxW(q_point));
                     }
                 }
 
                 // Get the degrees of freedom indices and distribute local to global
                 cell->get_dof_indices(local_dof_indices);
-                all_constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices, newton_matrix, newton_rhs, true);
+                all_constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices,
+                    newton_matrix, newton_rhs, true);
             }
         }
 
@@ -1390,13 +1250,14 @@ namespace PlasticityModel
         TimerOutput::Scope t(computing_timer, "Graphical output");
         pcout << "      Writing graphical output... " << std::flush;
 
+        pcout << "number of dofs scalar: " << dof_handler_scalar.n_dofs() << std::endl;
+        pcout << "stress temp size: " << stress_tensor_tmp.size() << std::endl;
+
         // Move mesh
         move_mesh(solution);
 
         DataOut<dim> data_out;
         data_out.attach_dof_handler(dof_handler);
-        DataOut<dim> data_out_scalar;
-        data_out_scalar.attach_dof_handler(dof_handler_scalar);
 
         const QGauss<dim> quadrature_formula(fe.degree + 1);
 
@@ -1409,13 +1270,6 @@ namespace PlasticityModel
                                  DataOut<dim>::type_dof_data, data_component_interpretation);
         data_out.add_data_vector(fraction_of_plastic_q_points_per_cell, "fraction_of_plastic_q_points");
 
-        // Use PointHistory to get stress at each quadrature point
-        // Check applicability of the vectors for shared memory
-        std::vector<Vector<double>> cauchy_stress(0.5 * (dim + 1) * dim, Vector<double>(dof_handler_scalar.n_dofs()));
-
-        // TODO: This is a bit of a hack, but it works for now but needs to be adjusted
-        unsigned int p = 0;
-
         for (int i = 0; i < dim; ++i)
             for (int j = i; j < dim; ++j)
             {
@@ -1427,26 +1281,15 @@ namespace PlasticityModel
                                          const SymmetricTensor<2, dim> &T = lqph->get_stress();
                                          return T[i][j];
                                      },
-                                     cauchy_stress[p]);
-                ++p;
+                                     stress_tensor_tmp);
+
+                std::string name = "T_" + std::to_string(i) + std::to_string(j);
+                data_out.add_data_vector(dof_handler_scalar, stress_tensor_tmp, name);
             }
 
-        // Add stress to output
-        p = 0;
-        for (int i = 0; i < dim; ++i)
-            for (int j = i; j < dim; ++j)
-            {
-                std::string name = "stress_" + std::to_string(i) + std::to_string(j);
-                data_out_scalar.add_data_vector(cauchy_stress[p], name);
-                // data_out.add_data_vector(cauchy_stress[p], name);
-                ++p;
-            }
-
-        // TODO: All data needs to be outputted to the same mesh
-        // data_out.build_patches();
-        // const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(output_dir, "solution", current_refinement_cycle, mpi_communicator, 2);
-        data_out_scalar.build_patches();
-        const std::string pvtu_filename = data_out_scalar.write_vtu_with_pvtu_record(output_dir, "solution", current_refinement_cycle, mpi_communicator, 2);
+        data_out.build_patches();
+        const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(output_dir,
+            "solution", current_refinement_cycle, mpi_communicator, 2);
         pcout << pvtu_filename << std::endl;
 
         // Move mesh back
