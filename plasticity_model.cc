@@ -252,10 +252,9 @@ namespace PlasticityModel
         SymmetricTensor<2, dim> stress_tensor;
         stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
 
-
         // Material properties for consistent tangent computation
-        double young_modulus = E; // Replace with the actual value or a parameter
-        double poisson_ratio = nu; // Replace with the actual value or a parameter
+        double young_modulus = E;
+        double poisson_ratio = nu;
         double yield_stress = sigma_0;
         double shear_modulus = mu;
         double bulk_modulus = kappa;
@@ -269,36 +268,11 @@ namespace PlasticityModel
         FullMatrix<double> tangent_matrix(6, 6); // For Voigt notation representation in 3D
 
         // Handle different yield criteria
-        if (yield_criteria == "Von-Mises")
-        {
-            // Handle Von-Mises yield condition
-            // ** Step 1: Calculate the deviatoric stress tensor **
-            SymmetricTensor<2, dim> s_tensor = deviator(stress_tensor); // Deviatoric stress tensor
-            const double deviator_stress_tensor_norm = s_tensor.norm();
-
-            stress_strain_tensor = stress_strain_tensor_mu;
-
-            if (deviator_stress_tensor_norm > sigma_0)
-            {
-                const double beta = sigma_0 / deviator_stress_tensor_norm;
-
-                if (hardening_law == "isotropic")
-                {
-                    stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
-                }
-                else if (hardening_law == "kinematic")
-                {
-                    backstress_tensor += (1 - gamma_kin) * (s_tensor - backstress_tensor);
-                }
-            }
-            return true;
-        }
-        else if (yield_criteria == "Tresca")
+        if (yield_criteria == "Tresca")
         {
             SymmetricTensor<2, dim> s_tensor = deviator(stress_tensor); // Deviatoric stress tensor
+
             // Step 2: Compute the principal stresses and their corresponding directions
-            std::vector<std::pair<double, Tensor<1, dim>>> eigen_pairs;
-
             auto s_tensor_principal = eigenvalues(s_tensor);
             auto s_tensor_principal_directions = eigenvectors(s_tensor);
 
@@ -311,29 +285,10 @@ namespace PlasticityModel
                           return s_tensor_principal[i1] < s_tensor_principal[i2];
                       });
 
-            // Sort eigenvalues and eigenvectors based on the sorted indices
-            std::vector<double> sorted_eigenvalues(s_tensor_principal.size());
-            std::vector<Tensor<1, dim>> sorted_eigenvectors(s_tensor_principal.size());
-
-            for (unsigned int i = 0; i < indices.size(); ++i) {
-                sorted_eigenvalues[i] = s_tensor_principal[indices[i]];
-                sorted_eigenvectors[i] = s_tensor_principal_directions[indices[i]].second;
-            }
-
-            // Pair sorted eigenvalues with their corresponding eigenvectors
-            for (unsigned int i = 0; i < sorted_eigenvalues.size(); ++i) {
-                eigen_pairs.emplace_back(sorted_eigenvalues[i], sorted_eigenvectors[i]);
-            }
-
-            // Sort the eigenvalue-eigenvector pairs based on eigenvalues in descending order
-            std::sort(eigen_pairs.begin(), eigen_pairs.end(), [](const auto &a, const auto &b) {
-                return a.first > b.first; // Sort based on the eigenvalue
-            });
-
-            // Now extract the sorted principal values and their corresponding directions
-            double s1 = eigen_pairs[0].first; // Largest principal value
-            double s2 = eigen_pairs[1].first; // Middle principal value
-            double s3 = eigen_pairs[2].first; // Smallest principal value
+            // Extract the sorted principal stresses
+            double s1 = s_tensor_principal[indices[2]]; // Largest principal value
+            double s2 = s_tensor_principal[indices[1]];
+            double s3 = s_tensor_principal[indices[0]]; // Smallest principal value
 
             // Step 3: Compute the yield function for Tresca (using deviatoric stresses)
             double phi = s1 - s3 - yield_stress;
@@ -368,6 +323,12 @@ namespace PlasticityModel
                     delta_gamma -= residual / dphi_dgamma;
                 }
 
+                if (!valid_return)
+                {
+                    // Failed to converge, return false
+                    return false;
+                }
+
                 // Update the principal deviatoric stresses using delta_gamma
                 s1 -= r2g * delta_gamma;
                 s3 += r2g * delta_gamma;
@@ -381,8 +342,6 @@ namespace PlasticityModel
                 }
 
                 // ** Step 5: Populate the tangent matrix based on return type **
-
-                // Populate tangent matrix for one-vector or two-vector return (main plane or corner)
                 if (is_two_vector_return)
                 {
                     // Two-vector return (corner return): Populate `tangent_matrix`
@@ -440,6 +399,8 @@ namespace PlasticityModel
                 return true;
             }
         }
+
+        return false;
     }
 
 
@@ -452,7 +413,7 @@ namespace PlasticityModel
         std::string yield_criteria,
         std::string hardening_law) const
     {
-        Assert(dim == 3, ExcNotImplemented()); // Ensure 3D
+        Assert(dim == 3, ExcNotImplemented());
 
         stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
 
@@ -461,8 +422,8 @@ namespace PlasticityModel
         stress_strain_tensor_linearized = stress_strain_tensor_mu;
 
         // Material properties for consistent tangent computation
-        double young_modulus = E; // Replace with the actual value or a parameter
-        double poisson_ratio = nu; // Replace with the actual value or a parameter
+        double young_modulus = E;
+        double poisson_ratio = nu;
         double yield_stress = sigma_0;
         double shear_modulus = mu;
         double bulk_modulus = kappa;
@@ -472,38 +433,7 @@ namespace PlasticityModel
         // Create the second-order matrix for the tangent operator using Voigt notation
         FullMatrix<double> tangent_matrix(6, 6); // For Voigt notation representation in 3D
 
-        if (yield_criteria == "Von-Mises")
-        {
-            SymmetricTensor<2, dim> deviator_stress_tensor = deviator(stress_tensor);
-            const double deviator_stress_tensor_norm = deviator_stress_tensor.norm();
-
-            if (deviator_stress_tensor_norm > sigma_0)
-            {
-                const double beta = sigma_0 / deviator_stress_tensor_norm;
-
-                if (hardening_law == "isotropic")
-                {
-                    // Isotropic hardening
-                    stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
-                    stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
-                }
-                else if (hardening_law == "kinematic")
-                {
-                    // Kinematic hardening
-                    backstress_tensor += gamma_kin * deviator(stress_tensor);
-                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
-                }
-
-                deviator_stress_tensor /= deviator_stress_tensor_norm;
-
-                stress_strain_tensor_linearized -=
-                    (1 - gamma_iso) * beta * 2 * mu * outer_product(deviator_stress_tensor, deviator_stress_tensor);
-            }
-
-            stress_strain_tensor += stress_strain_tensor_kappa;
-            stress_strain_tensor_linearized += stress_strain_tensor_kappa;
-        }
-        else if (yield_criteria == "Tresca")
+        if (yield_criteria == "Tresca")
         {
             SymmetricTensor<2, dim> s_tensor = deviator(stress_tensor); // Deviatoric stress tensor
 
@@ -517,36 +447,49 @@ namespace PlasticityModel
                 return s_tensor_principal[i1] < s_tensor_principal[i2];
             });
 
-            double s1 = s_tensor_principal[indices[dim - 1]]; // Max principal stress
-            double s3 = s_tensor_principal[indices[0]];       // Min principal stress
+            double s1 = s_tensor_principal[indices[2]]; // Max principal stress
+            double s2 = s_tensor_principal[indices[1]]; // Middle principal stress
+            double s3 = s_tensor_principal[indices[0]]; // Min principal stress
             double max_shear_stress = 0.5 * (s1 - s3);
 
             // Check for plasticity based on the Tresca criterion
-            if (max_shear_stress > (sigma_0 / 2))
+            if (max_shear_stress > (yield_stress / 2))
             {
-                const double beta = (sigma_0 / 2) / max_shear_stress;
+                const double beta = (yield_stress / 2) / max_shear_stress;
                 double delta_gamma = 0.0;
+                double tolerance = 1e-10;
+                bool valid_return = false;
 
-                if (hardening_law == "isotropic")
+                // Newton-Raphson iterative solver to find delta_gamma
+                for (unsigned int iteration = 0; iteration < 50; ++iteration)
                 {
-                    // Isotropic hardening
-                    stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
-                    stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
+                    double residual = (s1 - s3) - (yield_stress + delta_gamma * gamma_iso);
+
+                    if (std::abs(residual) < tolerance)
+                    {
+                        valid_return = true;
+                        break;
+                    }
+
+                    double dphi_dgamma = -gamma_iso - r4g;
+                    delta_gamma -= residual / dphi_dgamma;
                 }
-                else if (hardening_law == "kinematic")
+
+                if (!valid_return)
                 {
-                    // Kinematic hardening
-                    backstress_tensor += gamma_kin * unit_symmetric_tensor<dim>() * (s1 - s3);
-                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
+                    // Failed to converge, return
+                    return;
                 }
 
-                // Step 2: Construct tangent operator based on the Tresca criterion
-                // Use the correct return mapping, distinguishing one-vector and two-vector returns
+                // Update the principal deviatoric stresses using delta_gamma
+                s1 -= r2g * delta_gamma;
+                s3 += r2g * delta_gamma;
 
-                // Populate tangent matrix based on return type for Tresca
-                bool is_two_vector_return = false;
-                bool is_right_corner = false;
+                // Determine if two-vector return is needed
+                bool is_two_vector_return = !(s1 >= s2 && s2 >= s3);
+                bool is_right_corner = (s1 + s3 > 2 * s2);
 
+                // Step 2: Populate the tangent matrix based on return type for Tresca
                 if (is_two_vector_return)
                 {
                     double daa = r4g + gamma_iso;
