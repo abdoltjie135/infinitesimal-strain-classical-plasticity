@@ -255,11 +255,11 @@ namespace PlasticityModel
         // Material properties for consistent tangent computation
         double young_modulus = E;
         double poisson_ratio = nu;
-        double yield_stress = sigma_0;
+        const double yield_stress = sigma_0;
         double shear_modulus = mu;
         double bulk_modulus = kappa;
-        double r2g = 2.0 * shear_modulus; // 2 * G
-        double r4g = 4.0 * shear_modulus; // 4 * G
+        const double r2g = 2.0 * shear_modulus; // 2 * G
+        const double r4g = 4.0 * shear_modulus; // 4 * G
 
         bool is_two_vector_return = false;
         bool is_right_corner = false;
@@ -291,6 +291,7 @@ namespace PlasticityModel
             double s3 = s_tensor_principal[indices[0]]; // Smallest principal value
 
             // Step 3: Compute the yield function for Tresca (using deviatoric stresses)
+            //TODO: The yield stres needs to be a function of plastic stress and the plastic multiplier at step n
             double phi = s1 - s3 - yield_stress;
 
             // ** Step 4: Elastic or plastic step check **
@@ -303,6 +304,8 @@ namespace PlasticityModel
             else
             {
                 // Plastic step: Apply return mapping based on the Tresca model
+                //TODO: delta_gamma can be solved in closed form for linear isotropic hardening
+                // use this for testing first
                 double delta_gamma = 0.0;
                 double tolerance = 1e-10;
                 double hardening_modulus = gamma_iso;
@@ -323,11 +326,7 @@ namespace PlasticityModel
                     delta_gamma -= residual / dphi_dgamma;
                 }
 
-                if (!valid_return)
-                {
-                    // Failed to converge, return false
-                    return false;
-                }
+                AssertThrow(valid_return, ExcMessage("Failed to converge in return mapping"));
 
                 // Update the principal deviatoric stresses using delta_gamma
                 s1 -= r2g * delta_gamma;
@@ -345,9 +344,12 @@ namespace PlasticityModel
                 if (is_two_vector_return)
                 {
                     // Two-vector return (corner return): Populate `tangent_matrix`
-                    double daa = r4g + hardening_modulus;
-                    double dab = r2g + hardening_modulus;
-                    double dba = r2g + hardening_modulus;
+                    //FIXME: Constant values should be declared as 'const'
+                    // Add const in front of double
+
+                    const double daa = r4g + hardening_modulus;
+                    const double dab = r2g + hardening_modulus;
+                    const double dba = r2g + hardening_modulus;
                     double dbb = r4g + hardening_modulus;
                     double det = daa * dbb - dab * dba;
                     double r2gdd = r2g / det;
