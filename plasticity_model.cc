@@ -329,6 +329,8 @@ namespace PlasticityModel
                 AssertThrow(valid_return, ExcMessage("Failed to converge in return mapping"));
 
                 // Update the principal deviatoric stresses using delta_gamma
+                //TODO: The following needs to be done for two vector return as well
+                // item 3 in Box 8.3 (Computational Methods for Plasticity)
                 s1 -= r2g * delta_gamma;
                 s3 += r2g * delta_gamma;
 
@@ -394,6 +396,14 @@ namespace PlasticityModel
                     tangent_matrix(2, 1) = 0.0;
                     tangent_matrix(2, 2) = tangent_matrix(0, 0);
                 }
+
+                //TODO: Read Appendix A2 (Computational Methods for Plasticity)
+                //TODO: Need to implement 8.46 (Computational Methods for Plasticity) to explain how to go from ds/de to
+                // dsigma/de
+                // what is currently called the 'tangent_matrix' is not yet the tangent matrix
+                // Implement box A.6 in the book
+                //  needs equations 8.46 and 8.47
+                //  see equation 4.82 in the book for the symmetries
 
                 // ** Step 6: Map `tangent_matrix` back to `stress_strain_tensor` **
                 map_voigt_to_tensor(tangent_matrix, stress_strain_tensor);
