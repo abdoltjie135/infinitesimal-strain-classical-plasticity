@@ -239,6 +239,171 @@ namespace PlasticityModel
     //     }
     // }
 
+    template <int dim>
+    bool ConstitutiveLaw<dim>::get_stress_strain_tensor(
+        const SymmetricTensor<2, dim>& elastic_strain_n,
+        const SymmetricTensor<2, dim>& delta_strain,
+        SymmetricTensor<4, dim>& stress_strain_tensor,
+        std::string yield_criteria,
+        std::string hardening_law) const
+    {
+        Assert(dim == 3, ExcNotImplemented());
+
+        // Material properties for consistent tangent computation
+        double young_modulus = E;
+        double poisson_ratio = nu;
+        const double yield_stress_0 = sigma_0;
+        double shear_modulus = mu;
+        double bulk_modulus = kappa;
+        const double r2g = 2.0 * shear_modulus; // 2 * G
+        const double r4g = 4.0 * shear_modulus; // 4 * G
+
+        double accumulated_plastic_strain_n = 0.0;
+
+        bool is_two_vector_return = false;
+        bool is_right_corner = false;
+
+        // Elastic Predictor Step (Box 8.1, Step i)
+        SymmetricTensor<2, dim> elastic_strain_trial = elastic_strain_n + delta_strain; // ε_n+1^trial
+        double accumulated_plastic_strain_trial = accumulated_plastic_strain_n; // ε_p_n+1^trial
+        SymmetricTensor<2, dim> deviatoric_stress_trial = 2 * shear_modulus * deviator(elastic_strain_trial); // Deviatoric stress (Box 8.1, Step i)
+        double e_v_trial = trace(elastic_strain_trial); // Volumetric part of the trial elastic strain
+        double p_trial = bulk_modulus * e_v_trial; // p_n+1^trial
+
+        // Spectral decomposition (Box 8.1, Step ii)
+        auto s_eigenvalues = eigenvalues(deviatoric_stress_trial);
+        auto s_eigenvectors = eigenvectors(deviatoric_stress_trial);
+
+        // Sort principal deviatoric stresses in descending order (s1 >= s2 >= s3)
+        std::vector<unsigned int> indices(s_eigenvalues.size());
+        std::iota(indices.begin(), indices.end(), 0);
+        std::sort(indices.begin(), indices.end(), [&s_eigenvalues](unsigned int i1, unsigned int i2) {
+            return s_eigenvalues[i1] > s_eigenvalues[i2];
+        });
+
+        // Rearrange the eigenvectors to match the sorted eigenvalues
+        std::vector<SymmetricTensor<2, dim>> sorted_principal_directions(s_eigenvectors.size());
+        for (unsigned int i = 0; i < indices.size(); ++i) {
+            sorted_principal_directions[i] = s_eigenvectors[indices[i]];
+        }
+
+        // assigning values to each deviatoric principal stress
+        double s1_trial = s_eigenvalues[indices[0]];
+        double s2_trial = s_eigenvalues[indices[1]];
+        double s3_trial = s_eigenvalues[indices[2]];
+
+        // TODO: Create a yield stress function
+
+        // Plastic admissibility check (Box 8.1, Step iii)
+        double phi = s1_trial - s3_trial - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_trial);
+
+        // declare deviatoric principal stresses
+        double s1, s2, s3;
+
+        if (phi <= 0)
+        {
+            // Elastic step
+            // Set the values at n+1 to the trial values
+            SymmetricTensor<2, dim> elastic_strain_n1 = elastic_strain_trial;
+            double accumulated_plastic_strain_n1 = accumulated_plastic_strain_trial;
+            double e_v_n1 = e_v_trial;
+            double p_n1 = p_trial;
+            SymmetricTensor<2, dim> deviatoric_stress_n1 = deviatoric_stress_trial;
+
+            // FIXME: I think the following is exiting the function but not sure if this is being done correctly
+            return true;
+        }
+
+        // Plastic step: Return Mapping (Box 8.1, Step iv)
+        double delta_gamma = 0.0;
+        double residual = s1_trial - s3_trial - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n); // FIXME: Not sure if my function for the residual is correct
+        double tolerance = 1e-10;
+        bool valid_return = false;
+
+        // One-vector return to main plane (Box 8.2)
+        for (unsigned int iteration = 0; iteration < 50; ++iteration)
+        {
+            // Update yield stress after accumulating plastic strain (Box 8.2, Step ii)
+            // TODO: For general isotropic hardening the hardening slope (hardening_modulus) needs to be determined
+            //  for linear isotropic hardening it is constant
+            //  see box 8.2 in Computational Methods for Plasticity
+            double residual_derivative = -4 * shear_modulus - hardening_modulus;
+            double delta_gamma =- residual / residual_derivative;  // new guess for delta_gamma
+
+            // Compute the residual (Box 8.2, Step ii)
+            // FIXME: Not sure if my function for the residual is correct
+            double residual = s1_trial - s3_trial - 4.0 * shear_modulus * delta_gamma - (yield_stress_0 + hardening_modulus * (accumulated_plastic_strain_n + delta_gamma));
+
+            if (std::abs(residual) < tolerance)
+            {
+                valid_return = true;
+
+                // Update principal deviatoric stresses (Box 8.2, Step iii)
+                double s1 = s1_trial - 2.0 * shear_modulus * delta_gamma;
+                double s2 = s2_trial;
+                double s3 = s3_trial + 2.0 * shear_modulus * delta_gamma;
+
+                break;
+            }
+        }
+
+        // FIXME: I am not sure if the updated s values are accessible below
+        // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b)
+        if (s1 >= s2 && s2 >= s3)
+        {
+            double p_n1 = p_trial;
+
+            // TODO: The following needs to be completed but I am not sure how the e_i vectors are determined and if
+            //  they are changing
+            SymmetricTensor<2, dim> stress_n1 = (s1 + p_trial);
+
+            // TODO: The equation for the updated elastic strain needs to be completed
+            //  the deviatoric principal stresses and directions are needed
+            SymmetricTensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * ;
+
+            return true;
+        }
+        else
+        {
+            if (s1_trial + s3_trial - 2 * s2_trial > 0)
+            {
+                // Right corner return
+                is_right_corner = true;
+            }
+            else
+            {
+                // Left corner return
+                is_right_corner = false;
+            }
+
+            double delta_gamma_a = 0;
+            double delta_gamma_b = 0;
+
+            double s_b;
+
+            if (is_right_corner)
+            {
+                double s_b = s1_trial - s2_trial;
+            }
+            else
+            {
+                double s_b = s2_trial - s3_trial;
+            }
+
+            double s_a = s1_trial - s3_trial;
+
+            // TODO: The funciton for the yield stress will look different for nonlinear isotropic hardening
+            double residual_a = s_a - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n);
+            double residual_b = s_b - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n);
+
+            // TODO: Implement the rest of Box 8.3, stopped at step ii
+        }
+    }
+
+
+
+
+
 
     template <int dim>
     bool ConstitutiveLaw<dim>::get_stress_strain_tensor(
@@ -265,7 +430,11 @@ namespace PlasticityModel
         bool is_right_corner = false;
 
         // Create the second-order matrix for the tangent operator using Voigt notation
-        FullMatrix<double> tangent_matrix(6, 6); // For Voigt notation representation in 3D
+        FullMatrix<double> s_tangent_matrix(3, 3);  // For Voigt notation representation in 3D
+                                                             // Storing ds/de
+
+        FullMatrix<double> tangent_matrix(3, 3);    // Storing dstress/de
+
 
         // Handle different yield criteria
         if (yield_criteria == "Tresca")
@@ -359,42 +528,42 @@ namespace PlasticityModel
 
                     if (is_right_corner)
                     {
-                        tangent_matrix(0, 0) = r2g * (1.0 - r2gdd * r4g);
-                        tangent_matrix(0, 1) = r4g2dd * (daa - dab);
-                        tangent_matrix(0, 2) = r4g2dd * (dbb - dba);
-                        tangent_matrix(1, 0) = r4g2dd * dba;
-                        tangent_matrix(1, 1) = r2g * (1.0 - r2gdd * daa);
-                        tangent_matrix(1, 2) = r4g2dd * dab;
-                        tangent_matrix(2, 0) = r4g2dd * dba;
-                        tangent_matrix(2, 1) = r4g2dd * dab;
-                        tangent_matrix(2, 2) = r2g * (1.0 - r2gdd * dbb);
+                        s_tangent_matrix(0, 0) = r2g * (1.0 - r2gdd * r4g);
+                        s_tangent_matrix(0, 1) = r4g2dd * (daa - dab);
+                        s_tangent_matrix(0, 2) = r4g2dd * (dbb - dba);
+                        s_tangent_matrix(1, 0) = r4g2dd * dba;
+                        s_tangent_matrix(1, 1) = r2g * (1.0 - r2gdd * daa);
+                        s_tangent_matrix(1, 2) = r4g2dd * dab;
+                        s_tangent_matrix(2, 0) = r4g2dd * dba;
+                        s_tangent_matrix(2, 1) = r4g2dd * dab;
+                        s_tangent_matrix(2, 2) = r2g * (1.0 - r2gdd * dbb);
                     }
                     else
                     {
-                        tangent_matrix(0, 0) = r2g * (1.0 - r2gdd * dbb);
-                        tangent_matrix(0, 1) = r4g2dd * dab;
-                        tangent_matrix(0, 2) = r4g2dd * r2g;
-                        tangent_matrix(1, 0) = r4g2dd * dba;
-                        tangent_matrix(1, 1) = r2g * (1.0 - r2gdd * daa);
-                        tangent_matrix(1, 2) = r4g2dd * r2g;
-                        tangent_matrix(2, 0) = r4g2dd * (dbb - dba);
-                        tangent_matrix(2, 1) = r4g2dd * (daa - dab);
-                        tangent_matrix(2, 2) = r2g * (1.0 - r2gdd * r4g);
+                        s_tangent_matrix(0, 0) = r2g * (1.0 - r2gdd * dbb);
+                        s_tangent_matrix(0, 1) = r4g2dd * dab;
+                        s_tangent_matrix(0, 2) = r4g2dd * r2g;
+                        s_tangent_matrix(1, 0) = r4g2dd * dba;
+                        s_tangent_matrix(1, 1) = r2g * (1.0 - r2gdd * daa);
+                        s_tangent_matrix(1, 2) = r4g2dd * r2g;
+                        s_tangent_matrix(2, 0) = r4g2dd * (dbb - dba);
+                        s_tangent_matrix(2, 1) = r4g2dd * (daa - dab);
+                        s_tangent_matrix(2, 2) = r2g * (1.0 - r2gdd * r4g);
                     }
                 }
                 else
                 {
                     // One-vector return (main plane return)
                     double factor = r2g / (r4g + hardening_modulus);
-                    tangent_matrix(0, 0) = r2g * (1.0 - factor);
-                    tangent_matrix(0, 1) = 0.0;
-                    tangent_matrix(0, 2) = r2g * factor;
-                    tangent_matrix(1, 0) = 0.0;
-                    tangent_matrix(1, 1) = r2g;
-                    tangent_matrix(1, 2) = 0.0;
-                    tangent_matrix(2, 0) = r2g * factor;
-                    tangent_matrix(2, 1) = 0.0;
-                    tangent_matrix(2, 2) = tangent_matrix(0, 0);
+                    s_tangent_matrix(0, 0) = r2g * (1.0 - factor);
+                    s_tangent_matrix(0, 1) = 0.0;
+                    s_tangent_matrix(0, 2) = r2g * factor;
+                    s_tangent_matrix(1, 0) = 0.0;
+                    s_tangent_matrix(1, 1) = r2g;
+                    s_tangent_matrix(1, 2) = 0.0;
+                    s_tangent_matrix(2, 0) = r2g * factor;
+                    s_tangent_matrix(2, 1) = 0.0;
+                    s_tangent_matrix(2, 2) = s_tangent_matrix(0, 0);
                 }
 
                 //TODO: Read Appendix A2 (Computational Methods for Plasticity)
@@ -406,7 +575,7 @@ namespace PlasticityModel
                 //  see equation 4.82 in the book for the symmetries
 
                 // ** Step 6: Map `tangent_matrix` back to `stress_strain_tensor` **
-                map_voigt_to_tensor(tangent_matrix, stress_strain_tensor);
+                map_voigt_to_tensor(s_tangent_matrix, stress_strain_tensor);
 
                 return true;
             }
