@@ -53,6 +53,7 @@
 #include <vector>
 #include <utility>
 #include <numeric>
+#include <cmath>
 
 #include <sys/stat.h>
 #include <cerrno>
@@ -261,8 +262,9 @@ namespace PlasticityModel
 
         double accumulated_plastic_strain_n = 0.0;
 
-        bool is_two_vector_return = false;
-        bool is_right_corner = false;
+        // The following boolean variables will be used later for construction of the consistent tangent matrix
+        bool is_two_vector_return;
+        bool is_right_corner;
 
         // Elastic Predictor Step (Box 8.1, Step i)
         // TODO: Need to extract the eigenvectors of the following tensor because it is needed to contruct the stress
@@ -320,6 +322,13 @@ namespace PlasticityModel
         // declare deviatoric principal stresses
         double s1, s2, s3;
 
+        // storing ds/de
+        //  s is the deviatoric principal stresses
+        //  e is the deviatoric elastic strain tensor
+        // FIXME: Not sure if the following should be a symmetric tensor
+        Tensor<2, dim> ds_de;
+        SymmetricTensor<2, dim> dsigma_de;
+
         if (phi <= 0)
         {
             // Elastic step
@@ -356,8 +365,6 @@ namespace PlasticityModel
 
             if (std::abs(residual) < tolerance)
             {
-                valid_return = true;
-
                 // Update principal deviatoric stresses (Box 8.2, Step iii)
                 double s1 = s1_trial - 2.0 * shear_modulus * delta_gamma;
                 double s2 = s2_trial;
@@ -371,6 +378,8 @@ namespace PlasticityModel
         // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b)
         if (s1 >= s2 && s2 >= s3)
         {
+            is_two_vector_return = false;
+
             double p_n1 = p_trial;
 
             // TODO: The following needs to be completed but I am not sure how the e_i vectors are determined and if
@@ -382,19 +391,128 @@ namespace PlasticityModel
             //  the deviatoric principal stresses and directions are needed
             SymmetricTensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * ;
 
+            // computing ds/de for the one-vector return
+            double f = 2 * shear_modulus / (4 * shear_modulus + hardening_modulus);
+
+            ds_de[0][0] = 2 * shear_modulus * (1 - f);
+            ds_de[0][1] = 0;
+            ds_de[0][2] = 2 * shear_modulus * f;
+            ds_de[1][0] = 0;
+            ds_de[1][1] = 2 * shear_modulus;
+            ds_de[1][2] = 0;
+            ds_de[2][0] = 2 * shear_modulus * f;
+            ds_de[2][1] = 0;
+            ds_de[2][2] = 2 * shear_modulus * (1 - f);
+
+            // FIXME: Ensure that these loops are working correctly
+            for (unsigned int i = 0; i < 3; ++i) // Iterate over i
+            {
+                for (unsigned int j = 0; j < 3; ++j) // Iterate over j
+                {
+                    dsigma_de[i][j] = 0.0;  // Initialize to zero
+
+                    // Loop through the k index for the sum over k
+                    for (unsigned int k = 0; k < 3; ++k)
+                    {
+                        double delta_kj = (k == j) ? 1.0 : 0.0;
+                        dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
+                    }
+
+                    // Add the bulk modulus term
+                    dsigma_de[i][j] += bulk_modulus;
+                }
+            }
+
+            // FIXME: I am not sure if the following will exit the function
             return true;
         }
         else
         {
+            is_two_vector_return = true;
+
             if (s1_trial + s3_trial - 2 * s2_trial > 0)
             {
                 // Right corner return
                 is_right_corner = true;
+
+                // computing ds/de for the two-vector right return
+                double daa = -4 * shear_modulus - hardening_modulus;
+                double dab = -2 * shear_modulus - hardening_modulus;
+                double dba = -2 * shear_modulus - hardening_modulus;
+                double dbb = -4 * shear_modulus - hardening_modulus;
+
+                double det_d = daa * dbb - dab * dba;
+
+                ds_de[0][0] = 2 * shear_modulus * (1 - (8 * pow(shear_modulus, 2)) / det_d);
+                ds_de[0][1] = (4 * pow(shear_modulus, 2) / det_d) *(dab - daa);
+                ds_de[0][2] = (4 * pow(shear_modulus, 2) / det_d) * (dba - dbb);
+                ds_de[1][0] = (8 * pow(shear_modulus, 3)) / det_d;
+                ds_de[1][1] = 2 * shear_modulus * (1 + (2 * shear_modulus * daa) / det_d);
+                ds_de[1][2] = -(4 * pow(shear_modulus, 2) / det_d) * dba;
+                ds_de[2][0] = (8 * pow(shear_modulus, 3)) / det_d;
+                ds_de[2][1] = -(4 * pow(shear_modulus, 2) / det_d) * dab;
+                ds_de[2][2] = 2 * shear_modulus * (1 + (2 * shear_modulus * dbb) / det_d);
+
+                // FIXME: Ensure that these loops are working correctly
+                for (unsigned int i = 0; i < 3; ++i) // Iterate over i
+                {
+                    for (unsigned int j = 0; j < 3; ++j) // Iterate over j
+                    {
+                        dsigma_de[i][j] = 0.0;  // Initialize to zero
+
+                        // Loop through the k index for the sum over k
+                        for (unsigned int k = 0; k < 3; ++k)
+                        {
+                            double delta_kj = (k == j) ? 1.0 : 0.0;
+                            dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
+                        }
+
+                        // Add the bulk modulus term
+                        dsigma_de[i][j] += bulk_modulus;
+                    }
+                }
             }
             else
             {
                 // Left corner return
                 is_right_corner = false;
+
+                // computing ds/de for the two-vector right return
+                double daa = -4 * shear_modulus - hardening_modulus;
+                double dab = -2 * shear_modulus - hardening_modulus;
+                double dba = -2 * shear_modulus - hardening_modulus;
+                double dbb = -4 * shear_modulus - hardening_modulus;
+
+                double det_d = daa * dbb - dab * dba;
+
+                ds_de[0][0] = 2 * shear_modulus * (1 + (2 * shear_modulus * dbb) / det_d);
+                ds_de[0][1] = -(4 * pow(shear_modulus, 2) / det_d) * dab;
+                ds_de[0][2] = (8 * pow(shear_modulus, 3)) / det_d;
+                ds_de[1][0] = -(4 * pow(shear_modulus, 2) / det_d) * dba;
+                ds_de[1][1] = 2 * shear_modulus * (1 + (2 * shear_modulus * daa) / det_d);
+                ds_de[1][2] = (8 * pow(shear_modulus, 3)) / det_d;
+                ds_de[2][0] = (4 * pow(shear_modulus, 2) / det_d) * (dba - dbb);
+                ds_de[2][1] = (4 * pow(shear_modulus, 2) / det_d) * (dab - daa);
+                ds_de[2][2] = 2 * shear_modulus * (1 - (8 * pow(shear_modulus, 2)) / det_d);
+
+                // FIXME: Ensure that these loops are working correctly
+                for (unsigned int i = 0; i < 3; ++i) // Iterate over i
+                {
+                    for (unsigned int j = 0; j < 3; ++j) // Iterate over j
+                    {
+                        dsigma_de[i][j] = 0.0;  // Initialize to zero
+
+                        // Loop through the k index for the sum over k
+                        for (unsigned int k = 0; k < 3; ++k)
+                        {
+                            double delta_kj = (k == j) ? 1.0 : 0.0;
+                            dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
+                        }
+
+                        // Add the bulk modulus term
+                        dsigma_de[i][j] += bulk_modulus;
+                    }
+                }
             }
 
             Vector<double> delta_gamma_vector(2);
