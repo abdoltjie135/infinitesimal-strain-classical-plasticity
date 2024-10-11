@@ -239,6 +239,7 @@ namespace PlasticityModel
     //     }
     // }
 
+
     template <int dim>
     bool ConstitutiveLaw<dim>::get_stress_strain_tensor(
         const SymmetricTensor<2, dim>& elastic_strain_n,
@@ -264,7 +265,26 @@ namespace PlasticityModel
         bool is_right_corner = false;
 
         // Elastic Predictor Step (Box 8.1, Step i)
+        // TODO: Need to extract the eigenvectors of the following tensor because it is needed to contruct the stress
+        //  tensor at the step n+1
         SymmetricTensor<2, dim> elastic_strain_trial = elastic_strain_n + delta_strain; // ε_n+1^trial
+
+        auto elastic_strain_trial_eigenvalues = eigenvalues(elastic_strain_trial);
+        auto elastic_strain_trial_eigenvectors = eigenvectors(elastic_strain_trial);
+
+        // Sort principal deviatoric stresses in descending order (s1 >= s2 >= s3)
+        std::vector<unsigned int> indices_1(elastic_strain_trial_eigenvalues.size());
+        std::iota(indices_1.begin(), indices_1.end(), 0);
+        std::sort(indices_1.begin(), indices_1.end(), [&elastic_strain_trial_eigenvalues](unsigned int i1, unsigned int i2) {
+            return elastic_strain_trial_eigenvalues[i1] > elastic_strain_trial_eigenvalues[i2];
+        });
+
+        // Rearrange the eigenvectors to match the sorted eigenvalues
+        std::vector<SymmetricTensor<2, dim>> sorted_elastic_strain_trial_eigenvectors(elastic_strain_trial_eigenvectors.size());
+        for (unsigned int i = 0; i < indices_1.size(); ++i) {
+            sorted_elastic_strain_trial_eigenvectors[i] = elastic_strain_trial_eigenvectors[indices_1[i]];
+        }
+
         double accumulated_plastic_strain_trial = accumulated_plastic_strain_n; // ε_p_n+1^trial
         SymmetricTensor<2, dim> deviatoric_stress_trial = 2 * shear_modulus * deviator(elastic_strain_trial); // Deviatoric stress (Box 8.1, Step i)
         double e_v_trial = trace(elastic_strain_trial); // Volumetric part of the trial elastic strain
@@ -275,22 +295,22 @@ namespace PlasticityModel
         auto s_eigenvectors = eigenvectors(deviatoric_stress_trial);
 
         // Sort principal deviatoric stresses in descending order (s1 >= s2 >= s3)
-        std::vector<unsigned int> indices(s_eigenvalues.size());
-        std::iota(indices.begin(), indices.end(), 0);
-        std::sort(indices.begin(), indices.end(), [&s_eigenvalues](unsigned int i1, unsigned int i2) {
+        std::vector<unsigned int> indices_2(s_eigenvalues.size());
+        std::iota(indices_2.begin(), indices_2.end(), 0);
+        std::sort(indices_2.begin(), indices_2.end(), [&s_eigenvalues](unsigned int i1, unsigned int i2) {
             return s_eigenvalues[i1] > s_eigenvalues[i2];
         });
 
         // Rearrange the eigenvectors to match the sorted eigenvalues
-        std::vector<SymmetricTensor<2, dim>> sorted_principal_directions(s_eigenvectors.size());
-        for (unsigned int i = 0; i < indices.size(); ++i) {
-            sorted_principal_directions[i] = s_eigenvectors[indices[i]];
+        std::vector<SymmetricTensor<2, dim>> sorted_deviatoric_stress_eigenvectors(s_eigenvectors.size());
+        for (unsigned int i = 0; i < indices_2.size(); ++i) {
+            sorted_deviatoric_stress_eigenvectors[i] = s_eigenvectors[indices_2[i]];
         }
 
         // assigning values to each deviatoric principal stress
-        double s1_trial = s_eigenvalues[indices[0]];
-        double s2_trial = s_eigenvalues[indices[1]];
-        double s3_trial = s_eigenvalues[indices[2]];
+        double s1_trial = s_eigenvalues[indices_2[0]];
+        double s2_trial = s_eigenvalues[indices_2[1]];
+        double s3_trial = s_eigenvalues[indices_2[2]];
 
         // TODO: Create a yield stress function
 
@@ -355,6 +375,7 @@ namespace PlasticityModel
 
             // TODO: The following needs to be completed but I am not sure how the e_i vectors are determined and if
             //  they are changing
+            //  they coincide with the eigenvectors of elastic_strain_trial
             SymmetricTensor<2, dim> stress_n1 = (s1 + p_trial);
 
             // TODO: The equation for the updated elastic strain needs to be completed
@@ -376,8 +397,9 @@ namespace PlasticityModel
                 is_right_corner = false;
             }
 
-            double delta_gamma_a = 0;
-            double delta_gamma_b = 0;
+            Vector<double> delta_gamma_vector(2);
+            delta_gamma_vector[0] = 0;
+            delta_gamma_vector[1] = 0;
 
             double s_b;
 
@@ -393,10 +415,60 @@ namespace PlasticityModel
             double s_a = s1_trial - s3_trial;
 
             // TODO: The funciton for the yield stress will look different for nonlinear isotropic hardening
-            double residual_a = s_a - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n);
-            double residual_b = s_b - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n);
+            Vector<double> residual_vector(2);
+            residual_vector[0] = s_a - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n);
+            residual_vector[1] = s_b - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n);
 
             // TODO: Implement the rest of Box 8.3, stopped at step ii
+            double delta_gamma_sum = delta_gamma_vector[0] + delta_gamma_vector[1];
+            double accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma_sum;
+
+            // FIXME: The hardening slope is constant for linear isotropic hardening. This will need to be made general
+            //  this will need to be made general in the future
+            double H = hardening_modulus;
+
+            // FIXME: I can not take the inverse of d_matrix
+            FullMatrix<double> d_matrix(2, 2);
+            d_matrix(0, 0) = -4.0 * shear_modulus - H;
+            d_matrix(0, 1) = -2.0 * shear_modulus - H;
+            d_matrix(1, 0) = -2.0 * shear_modulus - H;
+            d_matrix(1, 1) = -4.0 * shear_modulus - H;
+
+            delta_gamma_vector =- d_matrix.inverse() * residual_vector;
+
+            residual_vector[0] = s_a - 2 * shear_modulus * (2 * delta_gamma_vector[0] + delta_gamma_vector[1]) -
+                (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n1);
+            residual_vector[1] = s_b - 2 * shear_modulus * (2 * delta_gamma_vector[1] + delta_gamma_vector[0]) -
+                (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n1);
+
+            if (abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance)
+            {
+                if (is_right_corner)
+                {
+                    s1 = s1_trial - 2 * shear_modulus * (delta_gamma_vector[0] + delta_gamma_vector[1]);
+                    s2 = s2_trial + 2 * shear_modulus * delta_gamma_vector[1];
+                    s3 = s3_trial + 2 * shear_modulus * delta_gamma_vector[0];
+                }
+                else
+                {
+                    s1 = s1_trial - 2 * shear_modulus * delta_gamma_vector[0];
+                    s2 = s2_trial - 2 * shear_modulus * delta_gamma_vector[1];
+                    s3 = s3_trial + 2 * shear_modulus * (delta_gamma_vector[0] + delta_gamma_vector[1]);
+                }
+
+            }
+
+            double p_n1 = p_trial;
+
+            // TODO: The following needs to be completed but I am not sure how the e_i vectors are determined and if
+            //  they are changing
+            SymmetricTensor<2, dim> stress_n1 = (s1 + p_trial);
+
+            // TODO: The equation for the updated elastic strain needs to be completed
+            //  the deviatoric principal stresses and directions are needed
+            SymmetricTensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * ;
+
+            return true;
         }
     }
 
