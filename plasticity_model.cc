@@ -84,6 +84,13 @@ namespace PlasticityModel
             SymmetricTensor<4, dim>& stress_strain_tensor, std::string yield_criteria,
             std::string hardening_law) const;
 
+        // FIXME: The following may not be correct
+        void consistent_tangent_matrix(Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
+            bool is_two_vector_return, bool is_right_corner) const;
+        // X - stress tensor
+        // Y - strain tensor
+        // the type of return mapping is needed
+
         void get_linearized_stress_strain_tensors(
             const SymmetricTensor<2, dim>& strain_tensor,
             SymmetricTensor<2, dim>& stress_tensor,
@@ -589,6 +596,131 @@ namespace PlasticityModel
             return true;
         }
     }
+
+
+    template <int dim>
+    void ConstitutiveLaw<dim>::consistent_tangent_matrix(
+        Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
+        bool is_two_vector_return, bool is_right_corner) const
+    {
+        // FIXME: The eigenvalues and eigenvectors should not be computed again but should be passed to this function
+        auto x = eigenvalues(X);  // Eigenvalues from X
+        auto y = eigenvalues(Y);  // Eigenvalues from Y
+        auto e = eigenvectors(X); // Eigenvectors from X
+
+        // Sort X eigenvalues in descending order (x1 >= x2 >= x3)
+        std::vector<unsigned int> indices_x(x.size());
+        std::iota(indices_x.begin(), indices_x.end(), 0);
+        std::sort(indices_x.begin(), indices_x.end(), [&x](unsigned int i1, unsigned int i2) {
+            return x[i1] > x[i2];
+        });
+
+        // Rearrange the eigenvectors to match the sorted eigenvalues of X
+        std::vector<decltype(e[0])> sorted_eigenvectors(e.size()); // Same type as elements of 'e'
+        std::vector<decltype(x[0])> sorted_eigenvalues_x(x.size()); // Same type as elements of 'x'
+
+        for (unsigned int i = 0; i < indices_x.size(); ++i) {
+            sorted_eigenvalues_x[i] = x[indices_x[i]];
+            sorted_eigenvectors[i] = e[indices_x[i]];
+        }
+
+        // Now assign back to 'x' and 'e' to retain the original variable names
+        x = sorted_eigenvalues_x;
+        e = sorted_eigenvectors;
+
+        // Sort Y eigenvalues in descending order (y1 >= y2 >= y3)
+        std::vector<unsigned int> indices_y(y.size());
+        std::iota(indices_y.begin(), indices_y.end(), 0);
+        std::sort(indices_y.begin(), indices_y.end(), [&y](unsigned int i1, unsigned int i2) {
+            return y[i1] > y[i2];
+        });
+
+        // Rearrange the eigenvalues of Y according to the sorted order
+        std::vector<decltype(y[0])> sorted_eigenvalues_y(y.size());  // Same type as elements of 'y'
+
+        for (unsigned int i = 0; i < indices_y.size(); ++i) {
+            sorted_eigenvalues_y[i] = y[indices_y[i]];
+        }
+
+        // Now assign back to 'y' to retain the original variable name
+        y = sorted_eigenvalues_y;
+
+        // Calculate the 4th-order tensor d[X^2]/dX_ijkl as per equation A.46
+        Tensor<4, dim> dX2_dX;
+
+        for (unsigned int i = 0; i < dim; ++i)
+        {
+            for (unsigned int j = 0; j < dim; ++j)
+            {
+                for (unsigned int k = 0; k < dim; ++k)
+                {
+                    for (unsigned int l = 0; l < dim; ++l)
+                    {
+                        // Calculate the Kronecker deltas inline
+                        double delta_ik = (i == k) ? 1.0 : 0.0;
+                        double delta_il = (i == l) ? 1.0 : 0.0;
+                        double delta_jl = (j == l) ? 1.0 : 0.0;
+                        double delta_kj = (k == j) ? 1.0 : 0.0;
+
+                        // Apply the formula directly for the 4th-order tensor
+                        dX2_dX[i][j][k][l] = 0.5 * (
+                            delta_ik * X[l][j] +
+                            delta_il * X[k][j] +
+                            delta_jl * X[i][k] +
+                            delta_kj * X[i][l]
+                        );
+                    }
+                }
+            }
+        }
+
+        // Compute the projection tensors Ei = ei ⊗ ei for each eigenvector
+        Tensor<2, dim> E;
+        for (unsigned int i = 0; i < dim; ++i) {
+            E[i] = outer_product(e[i], e[i]); // Use deal.II outer product for Ei
+        }
+
+        Tensor<4, dim> D;
+        D.clear();  // Initialize D to zero
+
+        if (x[0] != x[1] && x[1] != x[2])
+        {
+            for (unsigned int a = 0; a < dim; ++a)
+            {
+                unsigned int b;
+                unsigned int c;
+
+                if (a == 1)
+                {
+                    b = 2;
+                    c = 3;
+                }
+                if (a == 2)
+                {
+                    b = 3;
+                    c = 1;
+                }
+                if (a == 3)
+                {
+                    b = 1;
+                    c = 2;
+                }
+
+                D += (y[a] / ((x[a] - x[b]) * (x[a] - x[c]))) * (dX2_dX - (x[b] - x[c]))
+
+
+            }
+        }
+    }
+
+
+    // Helper function to compute Kronecker delta
+    template <int dim>
+    inline double kronecker_delta(unsigned int i, unsigned int j)
+    {
+        return (i == j) ? 1.0 : 0.0;
+    }
+
 
 
 
