@@ -706,11 +706,83 @@ namespace PlasticityModel
                     c = 2;
                 }
 
-                D += (y[a] / ((x[a] - x[b]) * (x[a] - x[c]))) * (dX2_dX - (x[b] - x[c]))
-
-
+                D += (y[a] / ((x[a] - x[b]) * (x[a] - x[c]))) * (dX2_dX - (x[b] - x[c]) * identity_tensor<dim>() -
+                    ((x[a] - x[b]) + (x[a] - x[c])) * outer_product(E[a], E[a]) - (x[b] - x[c]) *
+                    outer_product(E[b], E[b]) - outer_product(E[c], E[c]));
+            }
+            for (unsigned int i = 0; i < dim; ++i)
+            {
+                for (unsigned int j = 0; j < dim; ++j)
+                {
+                    D =+ dy_dx[i][j] * outer_product(E[i], E[i]);
+                }
             }
         }
+        if (x[0] == x[1] || x[1] == x[2] || x[0] == x[2])
+        {
+            unsigned int a;
+            unsigned int b;
+            unsigned int c;
+
+            if (x[0] == x[1])
+            {
+                b = 0;
+                c = 1;
+                a = 2;
+            }
+            if (x[1] == x[2])
+            {
+                b = 1;
+                c = 2;
+                a = 0;
+            }
+            // FIXME: I am not sure if this is correct
+            if (x[0] == x[2])
+            {
+                b = 0;
+                c = 2;
+                a = 1;
+            }
+
+            // TODO: These need to be checked if they are mathematically correct
+            double s1 = (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2])) +
+                        (1 / (x[0] - x[2])) * ((dy_dx[2][0] - dy_dx[2][1]) - (dy_dx[2][0] - dy_dx[2][2]));
+
+            double s2 = 2 * x[2] * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2])) +
+                       (x[0] + x[2]) / (x[0] - x[2]) * (dy_dx[2][0] - dy_dx[2][1]);
+
+            double s3 = 2 * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2]) * (x[0] - x[2])) +
+                       (1 / ((x[0] - x[2]) * (x[0] - x[2]))) *
+                       ((dy_dx[2][0] + dy_dx[0][0]) + (dy_dx[0][0] - dy_dx[0][2]) - (dy_dx[2][0] - dy_dx[2][2]));
+
+            double s4 = 2 * x[2] * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2]) * (x[0] - x[2])) +
+                       (1 / ((x[0] - x[2]) * (x[0] - x[2]))) *
+                       (dy_dx[2][0] - dy_dx[2][1]) + (x[2] / ((x[0] - x[2]) * (x[0] - x[2]))) *
+                       ((dy_dx[2][0] + dy_dx[0][0]) + (dy_dx[0][0] - dy_dx[0][2]) - (dy_dx[2][0] - dy_dx[2][2]));
+
+            double s5 = 2 * x[2] * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2]) * (x[0] - x[2])) +
+                       (1 / ((x[0] - x[2]) * (x[0] - x[2]))) *
+                       (dy_dx[2][0] - dy_dx[2][1]) + (x[2] / ((x[0] - x[2]) * (x[0] - x[2]))) *
+                       ((dy_dx[2][0] + dy_dx[0][0]) + (dy_dx[0][0] - dy_dx[0][2]) - (dy_dx[2][0] - dy_dx[2][2]));
+
+            double s6 = 2 * (x[2] * x[2]) * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2]) * (x[0] - x[2])) +
+                       (x[0] * x[2]) / ((x[0] - x[2]) * (x[0] - x[2])) *
+                       ((dy_dx[0][0] + dy_dx[2][0]) + (dy_dx[0][0] - dy_dx[0][2]) - (dy_dx[2][0] - dy_dx[2][2])) -
+                       (x[2] * x[2]) / ((x[0] - x[2]) * (x[0] - x[2])) *
+                       ((dy_dx[0][0] + dy_dx[2][0])) - (x[0] + x[2]) / (x[0] - x[2]) * dy_dx[2][0];
+
+            D = s1 * dX2_dX - s2 * identity_tensor<dim>() - s3 * outer_product(x, x) +
+                s4 * outer_product(x, unit_symmetric_tensor<dim>()) +
+                    s5 * outer_product(unit_symmetric_tensor<dim>(), X) -
+                    s6 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+        }
+        // FIXME: I think this should be an else statement that follows
+        if (x[0] == x[1] && x[1] == x[2])
+        {
+            D = (dy_dx[0][0] - dy_dx[0][1]) * identity_tensor<dim>() +
+                dy_dx[0][1] * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+        }
+
     }
 
 
