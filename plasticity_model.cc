@@ -247,6 +247,56 @@ namespace PlasticityModel
     //     }
     // }
 
+    // Function to find and sort eigenvalues and eigenvectors
+    template <int dim>
+    std::pair<std::array<double, dim>, Tensor<2, dim>> compute_principal_values_vectors(const SymmetricTensor<2, dim> &A)
+    {
+        // Find eigenvalues and eigenvectors
+        auto eigenvector_pairs = eigenvectors(A);
+
+        std::sort(eigenvector_pairs.begin(), eigenvector_pairs.end(),
+                 [](const std::pair<double, SymmetricTensor<2, dim>> &a, const std::pair<double, SymmetricTensor<2, dim>> &b) {
+                     return a.first > b.first;
+                 });
+
+        Tensor<2, dim> sorted_eigenvectors_tensor;
+        for (unsigned int i = 0; i < dim; ++i) {
+            for (unsigned int j = 0; j < dim; ++j) {
+                sorted_eigenvectors_tensor[j][i] = eigenvector_pairs[i].second[j];
+            }
+        }
+
+        std::array<double, dim> sorted_eigenvalues(eigenvector_pairs.size());
+
+        for (unsigned int i = 0; i < dim; ++i) {
+            sorted_eigenvalues[i] = eigenvector_pairs[i].first;
+        }
+
+        return std::make_pair(sorted_eigenvalues, sorted_eigenvectors_tensor);
+    }
+
+
+    template <int dim>
+    std::array<double, dim> compute_principal_values(const SymmetricTensor<2, dim> &A)
+    {
+        // Find eigenvalues and eigenvectors
+        auto eigenvalues_array = eigenvalues(A);
+
+        std::sort (eigenvalues_array.begin(), eigenvalues_array.end(),
+                   [](const double &a, const double &b) {
+                       return a > b;
+                   });
+
+        return eigenvalues_array;
+    }
+
+    // TODO: Create a function that takes in an array of principal values and tensor of sorted eigenvectors and returns
+    //  the tensor in the original co-ordinates system
+    //  arrange the principal values on the diagonal of a tensor
+    //  and then return a tensor that is the eigenvectors tensor times by principal values tensor times by the transpose
+    //  of the eigenvectors tensor
+
+
     // TODO: Pass the quadrature point history as an argument to this function
     template <int dim>
     bool ConstitutiveLaw<dim>::get_stress_strain_tensor(
@@ -283,8 +333,13 @@ namespace PlasticityModel
 
         // auto elastic_strain_trial_eigenvalues = eigenvalues(elastic_strain_trial);
 
-        // The following returns the eigenvalues and vectors
-        auto elastic_strain_trial_eigenvector_pairs = eigenvectors(elastic_strain_trial);
+        auto elastic_strain_trial_eigenvector_pairs = compute_principal_values_vectors(elastic_strain_trial);
+
+        auto elastic_strain_trial_eigenvalues = elastic_strain_trial_eigenvector_pairs.first;
+
+        auto elastic_strain_trial_eigenvectors_matrix = elastic_strain_trial_eigenvector_pairs.second;
+
+
 
         // // Sort principal deviatoric stresses in descending order (s1 >= s2 >= s3)
         // std::vector<unsigned int> indices_1(elastic_strain_trial_eigenvalues.size());
@@ -295,22 +350,24 @@ namespace PlasticityModel
 
         // TODO: Sort based on the first pair which is the eigenvalues
         //  create a function which sorts the eigenvalues and eigenvectors
-        // Rearrange the eigenvectors to match the sorted eigenvalues
-        std::sort(elastic_strain_trial_eigenvector_pairs.begin(), elastic_strain_trial_eigenvector_pairs.end(),
-                  [](const std::pair<double, SymmetricTensor<2, dim>> &a, const std::pair<double, SymmetricTensor<2, dim>> &b) {
-                      return a.first > b.first;
-                  });
 
-        std::vector<SymmetricTensor<2, dim>> sorted_elastic_strain_trial_eigenvectors(elastic_strain_trial_eigenvector_pairs.size());
-        for (unsigned int i = 0; i < dim; ++i) {
-            sorted_elastic_strain_trial_eigenvectors[i] = elastic_strain_trial_eigenvector_pairs[i];
-        }
 
-        std::vector<double> sorted_elastic_strain_trial_eigenvalues(elastic_strain_trial_eigenvector_pairs.size());
-
-        for (unsigned int i = 0; i < dim; ++i) {
-            sorted_elastic_strain_trial_eigenvalues[i] = elastic_strain_trial_eigenvector_pairs[i].first;
-        }
+        // // Rearrange the eigenvectors to match the sorted eigenvalues
+        // std::sort(elastic_strain_trial_eigenvector_pairs.begin(), elastic_strain_trial_eigenvector_pairs.end(),
+        //           [](const std::pair<double, SymmetricTensor<2, dim>> &a, const std::pair<double, SymmetricTensor<2, dim>> &b) {
+        //               return a.first > b.first;
+        //           });
+        //
+        // std::vector<Tensor<1, dim>> sorted_elastic_strain_trial_eigenvectors(elastic_strain_trial_eigenvector_pairs.size());
+        // for (unsigned int i = 0; i < dim; ++i) {
+        //     sorted_elastic_strain_trial_eigenvectors[i] = elastic_strain_trial_eigenvector_pairs[i];
+        // }
+        //
+        // std::vector<double> sorted_elastic_strain_trial_eigenvalues(elastic_strain_trial_eigenvector_pairs.size());
+        //
+        // for (unsigned int i = 0; i < dim; ++i) {
+        //     sorted_elastic_strain_trial_eigenvalues[i] = elastic_strain_trial_eigenvector_pairs[i].first;
+        // }
 
         double accumulated_plastic_strain_trial = accumulated_plastic_strain_n; // ε_p_n+1^trial
         SymmetricTensor<2, dim> deviatoric_stress_trial = 2 * shear_modulus * deviator(elastic_strain_trial); // Deviatoric stress (Box 8.1, Step i)
@@ -318,32 +375,14 @@ namespace PlasticityModel
         double p_trial = bulk_modulus * e_v_trial; // p_n+1^trial
 
         // Spectral decomposition (Box 8.1, Step ii)
-        auto s_eigenvalues = eigenvalues(deviatoric_stress_trial);
-        auto s_eigenvectors = eigenvectors(deviatoric_stress_trial);
+        auto s_trial_eigenvalues = compute_principal_values(deviatoric_stress_trial);
+        // auto s_eigenvectors = eigenvectors(deviatoric_stress_trial);
 
-        // TODO: Do the same as the elastic strain trial
-        // Sort principal deviatoric stresses in descending order (s1 >= s2 >= s3)
-        std::vector<unsigned int> indices_2(s_eigenvalues.size());
-        std::iota(indices_2.begin(), indices_2.end(), 0);
-        std::sort(indices_2.begin(), indices_2.end(), [&s_eigenvalues](unsigned int i1, unsigned int i2) {
-            return s_eigenvalues[i1] > s_eigenvalues[i2];
-        });
-
-        // Rearrange the eigenvectors to match the sorted eigenvalues
-        std::vector<SymmetricTensor<2, dim>> sorted_deviatoric_stress_eigenvectors(s_eigenvectors.size());
-        for (unsigned int i = 0; i < indices_2.size(); ++i) {
-            sorted_deviatoric_stress_eigenvectors[i] = s_eigenvectors[indices_2[i]];
-        }
-
-        // assigning values to each deviatoric principal stress
-        double s1_trial = s_eigenvalues[indices_2[0]];
-        double s2_trial = s_eigenvalues[indices_2[1]];
-        double s3_trial = s_eigenvalues[indices_2[2]];
 
         // TODO: Create a yield stress function
 
         // Plastic admissibility check (Box 8.1, Step iii)
-        double phi = s1_trial - s3_trial - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_trial);
+        double phi = s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] - (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_trial);
 
         // declare deviatoric principal stresses
         double s1, s2, s3;
@@ -461,23 +500,6 @@ namespace PlasticityModel
             // ds_de[2][1] = 0;
             ds_de[2][2] = 2 * shear_modulus * (1 - f);
 
-            // FIXME: This should be done at the end of the function once we have decided if it is one vector or two vector
-            //  Ensure that these loops are working correctly (this has been checked)
-            for (unsigned int i = 0; i < dim; ++i) // Iterate over i
-            {
-                for (unsigned int j = 0; j < dim; ++j) // Iterate over j
-                {
-                    dsigma_de[i][j] = bulk_modulus;  // Initialize to bulk modulus (K)
-
-                    // Loop through the k index for the sum over k
-                    for (unsigned int k = 0; k < dim; ++k)
-                    {
-                        double delta_kj = (k == j) ? 1.0 : 0.0;
-                        dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
-                    }
-                }
-            }
-
             // FIXME: I am not sure if the following will exit the function (this has been checked)
             // FIXME: Might not be good to exit the funcion at this point therefore no 'return' statement
             // return true;
@@ -551,25 +573,7 @@ namespace PlasticityModel
                 ds_de[2][1] = (4 * pow(shear_modulus, 2) / det_d) * (dab - daa);
                 ds_de[2][2] = 2 * shear_modulus * (1 - (8 * pow(shear_modulus, 2)) / det_d);
 
-                // FIXME: Ensure that these loops are working correctly
-                // FIXME: move to the end
-                for (unsigned int i = 0; i < 3; ++i) // Iterate over i
-                {
-                    for (unsigned int j = 0; j < 3; ++j) // Iterate over j
-                    {
-                        dsigma_de[i][j] = 0.0;  // Initialize to zero
 
-                        // Loop through the k index for the sum over k
-                        for (unsigned int k = 0; k < 3; ++k)
-                        {
-                            double delta_kj = (k == j) ? 1.0 : 0.0;
-                            dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
-                        }
-
-                        // Add the bulk modulus term
-                        dsigma_de[i][j] += bulk_modulus;
-                    }
-                }
             }
 
             Vector<double> delta_gamma_vector(2);
@@ -630,20 +634,39 @@ namespace PlasticityModel
             }
 
             // TODO: Add the Assert to check if it converged
+        }
 
-            // TODO: This appears twice therefore do once at the end
-            double p_n1 = p_trial;
+        // FIXME: Ensure that these loops are working correctly
+        // FIXME: move to the end
+        // The brackets after the first for loop are not necessary
+        // Equation 8.46 from textbook
+        for (unsigned int i = 0; i < 3; ++i) // Iterate over i
+        {
+            for (unsigned int j = 0; j < 3; ++j) // Iterate over j
+            {
+                dsigma_de[i][j] = bulk_modulus;
 
-            // TODO: The following needs to be completed but I am not sure how the e_i vectors are determined and if
-            //  they are changing
-            SymmetricTensor<2, dim> stress_n1 = (s1 + p_trial);
-
-            // TODO: The equation for the updated elastic strain needs to be completed
-            //  the deviatoric principal stresses and directions are needed
-            SymmetricTensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * ;
+                // Loop through the k index for the sum over k
+                for (unsigned int k = 0; k < 3; ++k)
+                {
+                    double delta_kj = (k == j) ? 1.0 : 0.0;
+                    dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
+                }
+            }
         }
 
         // TODO: All the common computations for the end should be moved here
+
+        // TODO: This appears twice therefore do once at the end
+        double p_n1 = p_trial;
+
+        // TODO: The following needs to be completed but I am not sure how the e_i vectors are determined and if
+        //  they are changing
+        SymmetricTensor<2, dim> stress_n1 = (s1 + p_trial);
+
+        // TODO: The equation for the updated elastic strain needs to be completed
+        //  the deviatoric principal stresses and directions are needed
+        SymmetricTensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * ;
 
         return true;
     }
