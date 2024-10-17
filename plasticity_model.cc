@@ -551,7 +551,9 @@ namespace PlasticityModel
         return true;
     }
 
-    // FIXME: I am not sure if the following function should output the elasticity tensor if it is elastic
+    // NOTE: I am not sure if the following function should output the elasticity tensor if it is elastic
+    // NOTE: I am wondering if elastic and elastoplastic consistent tangent operators should be passed as variables
+    //  to the function
     template <int dim>
     void ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
         Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
