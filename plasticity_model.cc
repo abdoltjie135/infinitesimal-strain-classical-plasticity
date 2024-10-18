@@ -84,7 +84,7 @@ namespace PlasticityModel
         std::shared_ptr<PointHistory<dim, double>> &qph, std::string yield_criteria, std::string hardening_law) const;
 
         // FIXME: The following declaration along with the function definition below may not be correct
-        void derivative_of_isotropic_tensor(Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
+        void consistent_tangent_operator(Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
             bool is_two_vector_return, bool is_right_corner) const;
         // X - stress tensor
         // Y - strain tensor
@@ -230,6 +230,7 @@ namespace PlasticityModel
     // TODO: Pass the quadrature point history as an argument to this function
     // TODO: The Von_Mises yield criteria should still be added
     //  both yield criteria should work with either isotropic or kinematic hardening
+
     template <int dim>
     bool ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
         const SymmetricTensor<2, dim>& elastic_strain_n,
@@ -555,7 +556,7 @@ namespace PlasticityModel
     // NOTE: I am wondering if elastic and elastoplastic consistent tangent operators should be passed as variables
     //  to the function
     template <int dim>
-    void ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
+    void ConstitutiveLaw<dim>::consistent_tangent_operator(
         Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
         bool is_two_vector_return, bool is_right_corner) const
     {

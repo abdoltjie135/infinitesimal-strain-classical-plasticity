@@ -62,6 +62,9 @@
 
 using namespace dealii;
 
+// NOTE: Perfect plasticity can be solved in closed form
+//  the hardening modulus is 0 for perfect plasticity
+//  see section 7.3.4 of the textbook for Von Mises with perfect plasticity
 // The following can be found in Box 7.3 and 7.4 from the textbook
 bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim>& elastic_strain_n,
  const SymmetricTensor<2, dim>& delta_strain, SymmetricTensor<4, dim>& stress_strain_tensor,
@@ -89,6 +92,7 @@ bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim>& 
  else
  {
      tolerance = 1e-6; // Tolerance for the Newton-Raphson method
+     // Newton-Raphson method
     for (unsigned int k = 0; k < 50; ++k)
     {
         double delta_sigma = 0.0;
@@ -107,11 +111,45 @@ bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim>& 
         if (abs(phi) < tolerance)
         {
             double p_n1 = p_trial;
-            double s_n1 = (1 - (delta_sigma * 3 * shear_modulus) / q_trial) * deviatoric_stress_trial;
-            double stress_n1 = s_n1 + p_n1 * IdentityTensor<2, dim>();
-
+            SymmetricTensor<2, dim> s_n1 = (1 - (delta_sigma * 3 * shear_modulus) / q_trial) * deviatoric_stress_trial;
+            SymmetricTensor<2, dim> stress_n1 = s_n1 + p_n1 * identity_tensor<dim>();
+            SymmetricTensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * s_n1 +
+                (1 / 3) * e_v_trial * IdentityTensor<2, dim>();
+            double accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_sigma;
         }
     }
  }
+}
+
+// The following can be found in section 7.3.4 of the textbook
+template <int dim>
+void ConstitutiveLaw<dim>::consistent_tangent_operator(bool is_plastic, double delta_gamma,
+    SymmetricTensor<2, dim> stress_n1) const
+{
+    // Initialize the tensor components
+    for (unsigned int i = 0; i < dim; ++i)
+        for (unsigned int j = 0; j < dim; ++j)
+            for (unsigned int k = 0; k < dim; ++k)
+                for (unsigned int l = 0; l < dim; ++l)
+                {
+                    SymmetricTensor<4, dim> I_s[i][j][k][l] = 0.5 * ( (i == k && j == l) + (i == l && j == k) );
+                }
+
+    SymmetricTensor<4, dim> I_d = I_s - (1 / 3) * outer_product(identity_tensor<dim>(), identity_tensor<dim>());
+
+    if (is_plastic == false)
+    {
+        SymmetricTensor<4, dim> D = 2 * shear_modulus * I_d +
+            bulk_modulus * outer_product(identity_tensor<dim>(), identity_tensor<dim>());
+    }
+    else
+    {
+        SymmetricTensor<2, dim> N_n1 = deviatoric_stress_trial / deviatoric_stress_trial.norm();
+
+        SymmetricTensor<4, dim> D = 2 * shear_modulus * (1 - (delta_sigma * 3 * shear_modulus) / q_trial) * I_d +
+            6 * shear_modulus * pow(shear_modulus, 2) * (delta_sigma / q_trial - 1 / (3 * shear_modulus +
+                hardening_modulus)) * outer_product(N_n1, N_n1) +
+                    bulk_modulus * outer_product(identity_tensor<dim>(), identity_tensor<dim>());
+    }
 }
 
