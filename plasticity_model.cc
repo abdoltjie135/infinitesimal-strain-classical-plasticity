@@ -65,6 +65,46 @@ namespace PlasticityModel
 {
     using namespace dealii;
 
+    // TODO: This needs to be setup to work with multiple cycles
+    template <int dim>
+    class PointHistory
+    {
+    public:
+        PointHistory() = default;
+        void setup(const SymmetricTensor<2, dim> &initial_stress);
+        SymmetricTensor<2, dim> get_stress() const;
+        void set_stress(const SymmetricTensor<2, dim> &stress);
+
+        // TODO: I am not sure if these should be private or public
+        SymmetricTensor<2, dim> elastic_strain;
+        double accumulated_plastic_strain;
+        double e_v1;
+        double p1;
+        SymmetricTensor<2, dim> deviatoric_stress;
+
+    private:
+        SymmetricTensor<2, dim> stress;
+    };
+
+    // TODO: I am not sure if the following function is needed
+    template <int dim>
+    void PointHistory<dim>::setup(const SymmetricTensor<2, dim> &initial_stress)
+    {
+        stress = initial_stress;
+    }
+
+    template <int dim>
+    SymmetricTensor<2, dim> PointHistory<dim>::get_stress() const
+    {
+        return stress;
+    }
+
+    template <int dim>
+    void PointHistory<dim>::set_stress(const SymmetricTensor<2, dim> &stress)
+    {
+        this->stress = stress;
+    }
+
     template <int dim>
     class ConstitutiveLaw
     {
@@ -81,10 +121,10 @@ namespace PlasticityModel
         // respect to strain based off of whether a one-vector or a two-vector return was used
         bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim>& elastic_strain_n,
         const SymmetricTensor<2, dim>& delta_strain, SymmetricTensor<4, dim>& stress_strain_tensor,
-        std::shared_ptr<PointHistory<dim, double>> &qph, std::string yield_criteria, std::string hardening_law) const;
+        std::shared_ptr<PointHistory<dim>> &qph, std::string yield_criteria, std::string hardening_law) const;
 
         // FIXME: The following declaration along with the function definition below may not be correct
-        void consistent_tangent_operator(Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
+        void derivative_of_isotropic_tensor(Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
             bool is_two_vector_return, bool is_right_corner) const;
         // X - stress tensor
         // Y - strain tensor
@@ -236,7 +276,7 @@ namespace PlasticityModel
         const SymmetricTensor<2, dim>& elastic_strain_n,
         const SymmetricTensor<2, dim>& delta_strain,
         SymmetricTensor<4, dim>& stress_strain_tensor,
-        std::shared_ptr<PointHistory<dim, double>> &qph,
+        std::shared_ptr<PointHistory<dim>> &qph,
         std::string yield_criteria,
         std::string hardening_law) const
     {
@@ -454,6 +494,8 @@ namespace PlasticityModel
             residual_vector[1] = s_b - yield_stress(yield_stress_0, hardening_modulus,
                 accumulated_plastic_strain_n);
 
+            Vector<double> delta_gamma_vector_update(2);
+
             // Newton iteration for two-vector return (Box 8.3, Step ii) from the textbook
             for (unsigned int iteration = 0; iteration < 50; ++iteration)
             {
@@ -471,7 +513,13 @@ namespace PlasticityModel
                 d_matrix(1, 0) = -2.0 * shear_modulus - H;
                 d_matrix(1, 1) = -4.0 * shear_modulus - H;
 
-                delta_gamma_vector =- d_matrix.inverse() * residual_vector;
+                FullMatrix<double> d_matrix_inverse(2, 2);
+                d_matrix_inverse.invert(d_matrix);
+
+                residual_vector *= -1;
+                d_matrix_inverse.vmult(delta_gamma_vector_update, residual_vector);
+
+                delta_gamma_vector += delta_gamma_vector_update;
 
                 residual_vector[0] = s_a - 2 * shear_modulus * (2 * delta_gamma_vector[0] + delta_gamma_vector[1]) -
                     (yield_stress_0 + hardening_modulus * accumulated_plastic_strain_n1);
@@ -526,9 +574,10 @@ namespace PlasticityModel
             (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
         // Adding state variables to the quadrature point history
-        qph.elastic_strain = elastic_strain_n1;
-        qph.stress = stress_n1;
-        qph.p = p_n1;
+        // TODO: Change to forward arrows when writing to the shared pointer
+        qph->elastic_strain = elastic_strain_n1;
+        qph->stress = stress_n1;
+        qph->p = p_n1;
 
         // FIXME: Ensure that these loops are working correctly
         // FIXME: move to the end
@@ -555,8 +604,11 @@ namespace PlasticityModel
     // NOTE: I am not sure if the following function should output the elasticity tensor if it is elastic
     // NOTE: I am wondering if elastic and elastoplastic consistent tangent operators should be passed as variables
     //  to the function
+    // TODO: Send in the principal values and directions
+    //  the bools will no longer be needed because they are dependant on the return-mapping chosen
+    //  the function should output the 4th order tensor instead of the void
     template <int dim>
-    void ConstitutiveLaw<dim>::consistent_tangent_operator(
+    void ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
         Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
         bool is_two_vector_return, bool is_right_corner) const
     {
@@ -1017,45 +1069,7 @@ namespace PlasticityModel
         }
     }
 
-    // TODO: This needs to be setup to work with multiple cycles
-    template <int dim, typename Number>
-    class PointHistory
-    {
-    public:
-        PointHistory() = default;
-        void setup(const SymmetricTensor<2, dim> &initial_stress);
-        SymmetricTensor<2, dim> get_stress() const;
-        void set_stress(const SymmetricTensor<2, dim> &stress);
 
-        // TODO: I am not sure if these should be private or public
-        SymmetricTensor<2, dim, Number> elastic_strain;
-        double accumulated_plastic_strain;
-        double e_v1;
-        double p1;
-        SymmetricTensor<2, dim, Number> deviatoric_stress;
-
-    private:
-        SymmetricTensor<2, dim> stress;
-    };
-
-    // TODO: I am not sure if the following function is needed
-    template <int dim, typename Number>
-    void PointHistory<dim, Number>::setup(const SymmetricTensor<2, dim> &initial_stress)
-    {
-        stress = initial_stress;
-    }
-
-    template <int dim, typename Number>
-    SymmetricTensor<2, dim> PointHistory<dim, Number>::get_stress() const
-    {
-        return stress;
-    }
-
-    template <int dim, typename Number>
-    void PointHistory<dim, Number>::set_stress(const SymmetricTensor<2, dim> &stress)
-    {
-        this->stress = stress;
-    }
 
 
     template <int dim>
@@ -1089,7 +1103,7 @@ namespace PlasticityModel
         parallel::distributed::Triangulation<dim> triangulation;  // distributing the mesh across multiple processors
                                                                   // for parallel computing
 
-        std::vector<std::shared_ptr<PointHistory<dim, double>>> quadrature_point_history;
+        std::vector<std::shared_ptr<PointHistory<dim>>> quadrature_point_history;
 
         const unsigned int fe_degree;
         const FESystem<dim> fe;
@@ -1410,7 +1424,7 @@ namespace PlasticityModel
             {
                 for (unsigned int q = 0; q < quadrature_formula.size(); ++q)
                 {
-                    quadrature_point_history[local_history_index] = std::make_shared<PointHistory<dim, double>>();
+                    quadrature_point_history[local_history_index] = std::make_shared<PointHistory<dim>>();
                     ++local_history_index;
                 }
             }
@@ -1952,7 +1966,7 @@ namespace PlasticityModel
                                      [&](const typename DoFHandler<dim>::active_cell_iterator &cell, const unsigned int q_point) -> double
                                      {
                                          unsigned int local_index = cell->active_cell_index() * quadrature_formula.size();
-                                         const std::shared_ptr<PointHistory<dim, double>> &lqph = quadrature_point_history[local_index + q_point];
+                                         const std::shared_ptr<PointHistory<dim>> &lqph = quadrature_point_history[local_index + q_point];
                                          const SymmetricTensor<2, dim> &T = lqph->get_stress();
                                          return T[i][j];
                                      },
