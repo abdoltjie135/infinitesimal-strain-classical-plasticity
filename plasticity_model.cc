@@ -76,23 +76,22 @@ namespace PlasticityModel
         void setup(const SymmetricTensor<2, dim> &initial_stress);
         SymmetricTensor<2, dim> get_stress() const;
         void set_stress(const SymmetricTensor<2, dim> &stress);
+
+        // TODO: The following function needs to be defined
         void store_internal_variables();
 
         // NOTE: I am not sure if these should be private or public
         // TODO: Prefix these variables with 'store'
         SymmetricTensor<2, dim> elastic_strain;
-        double accumulated_plastic_strain;
-        // double e_v1;
-        // double p1;
-        // plasti_strain(tensor)
-        // stress(tensor)
-        // principal stresses
-        // back stress (tensor)
-        // accumulated plastic strain
-        // is_plastic (bool) this will indicate if it is plastic or elastic
-
-    private:
+        SymmetricTensor<2, dim> plastic_strain;
         SymmetricTensor<2, dim> stress;
+        SymmetricTensor<2, dim> back_stress;
+        std::vector<double> principal_stresses;
+        double accumulated_plastic_strain;
+        bool is_plastic;
+
+    // There are no private variables at the moment
+    // private:
     };
 
     // NOTE: I am not sure if the point history class was setup in the best way possible
@@ -134,12 +133,9 @@ namespace PlasticityModel
         std::shared_ptr<PointHistory<dim>> &qph, std::string yield_criteria, std::string hardening_law) const;
 
         // NOTE: The following declaration along with the function definition below may not be correct
-        Tensor<4, dim> derivative_of_isotropic_tensor(Vector<double> elastic_strain_trial_eigenvalues,
-            Tensor<2, dim> elastic_strain_trial_eigenvectors_matrix, Tensor<2, dim>, Tensor<2, dim> Y,
+        Tensor<4, dim> derivative_of_isotropic_tensor(Vector<double> x,
+            Tensor<2, dim> e, Tensor<2, dim>, Tensor<2, dim> Y,
             Tensor<2, dim> dy_dx) const;
-        // X - stress tensor
-        // Y - strain tensor
-        // the type of return mapping is needed therefore the two boolean variables are being passed as variables
 
         void get_linearized_stress_strain_tensors(
             const SymmetricTensor<2, dim>& strain_tensor,
@@ -613,27 +609,18 @@ namespace PlasticityModel
     // TODO: Make this function generic with X, Y and dy_dx as inputs
     template <int dim>
     Tensor<4, dim> ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
-        Vector<double> elastic_strain_trial_eigenvalues, Tensor<2, dim> elastic_strain_trial_eigenvectors_matrix,
-        Tensor<2, dim> elastic_strain_trial, Tensor<2, dim> Y, Tensor<2, dim> dy_dx) const
+        Vector<double> x, Tensor<2, dim> e,
+        Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx) const
     {
-        // Y - pass the stress at n+1
-        // dy_dx - pass then dsigma_de
+        // For this model the following should be passed as the arguments of this function
+        //   Y - stress at n+1 as a tensor
+        //   X - trial elastic strain at n+1 as a tensor
+        //   x - the eigenvalues of the trial elastic strain tensor
+        //   e - the eigenvectors of the trial elastic strain tensor
+        //   dy_dx - derivative of the stress (at n+1) with respect to the trial elastic strain (at n+1)
 
-        // The following was extracted from appendix A in the textbook
-
-        // FIXME: The eigenvalues and eigenvectors do not need to be computed again but can be passed as a variable
-        //  to the function
-        // The following functions which are used to get eigenvalues and eigenvectors
-        // also sorts them in descending order
-        auto e = elastic_strain_trial_eigenvectors_matrix;  // Eigenvectors from X
-
-        Tensor<2, dim> X = elastic_strain_trial;
-
-        Vector<double> x;
-        x[0] = elastic_strain_trial_eigenvalues[0];
-        x[1] = elastic_strain_trial_eigenvalues[1];
-        x[2] = elastic_strain_trial_eigenvalues[2];
-
+        // The eigenvalues of the stress at n+1 are not being computed before. The stress at n+1 is being passed as a
+        // tensor in its principal directions therefore the principal stresses are on the diagonal of the tensor.
         Vector<double> y;
         y[0] = Y[0][0];
         y[1] = Y[1][1];
@@ -675,6 +662,7 @@ namespace PlasticityModel
             E[i] = outer_product(e[i], e[i]);
         }
 
+        // Initialize the 4th-order tensor D to zero
         Tensor<4, dim> D = 0;
 
         // The following can be found in box A.6 of the textbook
@@ -732,7 +720,7 @@ namespace PlasticityModel
                 c = 2;
             }
 
-            // TODO: These need to be checked if they are mathematically correct
+            // TODO: These need to be checked if they are copied (from the textbook) correctly
             // The following are not deviatoric stress values
             double s1 = (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2])) +
                         (1 / (x[0] - x[2])) * ((dy_dx[2][0] - dy_dx[2][1]) - (dy_dx[2][0] - dy_dx[2][2]));
@@ -760,7 +748,7 @@ namespace PlasticityModel
                        (x[2] * x[2]) / ((x[0] - x[2]) * (x[0] - x[2])) *
                        ((dy_dx[0][0] + dy_dx[2][0])) - (x[0] + x[2]) / (x[0] - x[2]) * dy_dx[2][0];
 
-            D = s1 * dX2_dX - s2 * identity_tensor<dim>() - s3 * outer_product(elastic_strain_trial, elastic_strain_trial) +
+            D = s1 * dX2_dX - s2 * identity_tensor<dim>() - s3 * outer_product(X, X) +
                 s4 * outer_product(x, unit_symmetric_tensor<dim>()) +
                     s5 * outer_product(unit_symmetric_tensor<dim>(), X) -
                     s6 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
@@ -771,257 +759,6 @@ namespace PlasticityModel
                 dy_dx[0][1] * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
         }
         return D;
-    }
-
-
-    // template <int dim>
-    // void ConstitutiveLaw<dim>::get_linearized_stress_strain_tensors(
-    //     const SymmetricTensor<2, dim>& strain_tensor,
-    //     SymmetricTensor<2, dim>& stress_tensor,
-    //     SymmetricTensor<4, dim>& stress_strain_tensor_linearized,
-    //     SymmetricTensor<4, dim>& stress_strain_tensor,
-    //     std::string yield_criteria,
-    //     std::string hardening_law) const
-    // {
-    //     Assert(dim == 3, ExcNotImplemented());
-    //
-    //     stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
-    //
-    //     // Initialize tangent tensors as the elastic part
-    //     stress_strain_tensor = stress_strain_tensor_mu;
-    //     stress_strain_tensor_linearized = stress_strain_tensor_mu;
-    //
-    //     // Material properties for consistent tangent computation
-    //     double young_modulus = E;
-    //     double poisson_ratio = nu;
-    //     double yield_stress = sigma_0;
-    //     double shear_modulus = mu;
-    //     double bulk_modulus = kappa;
-    //     double r2g = 2.0 * shear_modulus; // 2 * G
-    //     double r4g = 4.0 * shear_modulus; // 4 * G
-    //
-    //     // Create the second-order matrix for the tangent operator using Voigt notation
-    //     FullMatrix<double> tangent_matrix(6, 6); // For Voigt notation representation in 3D
-    //
-    //     if (yield_criteria == "Tresca")
-    //     {
-    //         SymmetricTensor<2, dim> s_tensor = deviator(stress_tensor); // Deviatoric stress tensor
-    //
-    //         // Step 1: Compute the principal stresses and their corresponding directions
-    //         auto s_tensor_principal = eigenvalues(s_tensor);
-    //         std::vector<unsigned int> indices(s_tensor_principal.size());
-    //         std::iota(indices.begin(), indices.end(), 0);
-    //
-    //         // Sort indices based on eigenvalues to find min and max
-    //         std::sort(indices.begin(), indices.end(), [&s_tensor_principal](unsigned int i1, unsigned int i2) {
-    //             return s_tensor_principal[i1] < s_tensor_principal[i2];
-    //         });
-    //
-    //         double s1 = s_tensor_principal[indices[2]]; // Max principal stress
-    //         double s2 = s_tensor_principal[indices[1]]; // Middle principal stress
-    //         double s3 = s_tensor_principal[indices[0]]; // Min principal stress
-    //         double max_shear_stress = 0.5 * (s1 - s3);
-    //
-    //         // Check for plasticity based on the Tresca criterion
-    //         if (max_shear_stress > (yield_stress / 2))
-    //         {
-    //             const double beta = (yield_stress / 2) / max_shear_stress;
-    //             double delta_gamma = 0.0;
-    //             double tolerance = 1e-10;
-    //             bool valid_return = false;
-    //
-    //             // Newton-Raphson iterative solver to find delta_gamma
-    //             for (unsigned int iteration = 0; iteration < 50; ++iteration)
-    //             {
-    //                 double residual = (s1 - s3) - (yield_stress + delta_gamma * gamma_iso);
-    //
-    //                 if (std::abs(residual) < tolerance)
-    //                 {
-    //                     valid_return = true;
-    //                     break;
-    //                 }
-    //
-    //                 double dphi_dgamma = -gamma_iso - r4g;
-    //                 delta_gamma -= residual / dphi_dgamma;
-    //             }
-    //
-    //             if (!valid_return)
-    //             {
-    //                 // Failed to converge, return
-    //                 return;
-    //             }
-    //
-    //             // Update the principal deviatoric stresses using delta_gamma
-    //             s1 -= r2g * delta_gamma;
-    //             s3 += r2g * delta_gamma;
-    //
-    //             // Determine if two-vector return is needed
-    //             bool is_two_vector_return = !(s1 >= s2 && s2 >= s3);
-    //             bool is_right_corner = (s1 + s3 > 2 * s2);
-    //
-    //             // Step 2: Populate the tangent matrix based on return type for Tresca
-    //             if (is_two_vector_return)
-    //             {
-    //                 double daa = r4g + gamma_iso;
-    //                 double dab = r2g + gamma_iso;
-    //                 double dba = r2g + gamma_iso;
-    //                 double dbb = r4g + gamma_iso;
-    //                 double det = daa * dbb - dab * dba;
-    //                 double r2gdd = r2g / det;
-    //                 double r4g2dd = r2g * r2gdd;
-    //
-    //                 if (is_right_corner)
-    //                 {
-    //                     tangent_matrix(0, 0) = r2g * (1.0 - r2gdd * r4g);
-    //                     tangent_matrix(0, 1) = r4g2dd * (daa - dab);
-    //                     tangent_matrix(0, 2) = r4g2dd * (dbb - dba);
-    //                     tangent_matrix(1, 0) = r4g2dd * dba;
-    //                     tangent_matrix(1, 1) = r2g * (1.0 - r2gdd * daa);
-    //                     tangent_matrix(1, 2) = r4g2dd * dab;
-    //                     tangent_matrix(2, 0) = r4g2dd * dba;
-    //                     tangent_matrix(2, 1) = r4g2dd * dab;
-    //                     tangent_matrix(2, 2) = r2g * (1.0 - r2gdd * dbb);
-    //                 }
-    //                 else
-    //                 {
-    //                     tangent_matrix(0, 0) = r2g * (1.0 - r2gdd * dbb);
-    //                     tangent_matrix(0, 1) = r4g2dd * dab;
-    //                     tangent_matrix(0, 2) = r4g2dd * r2g;
-    //                     tangent_matrix(1, 0) = r4g2dd * dba;
-    //                     tangent_matrix(1, 1) = r2g * (1.0 - r2gdd * daa);
-    //                     tangent_matrix(1, 2) = r4g2dd * r2g;
-    //                     tangent_matrix(2, 0) = r4g2dd * (dbb - dba);
-    //                     tangent_matrix(2, 1) = r4g2dd * (daa - dab);
-    //                     tangent_matrix(2, 2) = r2g * (1.0 - r2gdd * r4g);
-    //                 }
-    //             }
-    //             else
-    //             {
-    //                 // One-vector return (main plane return)
-    //                 double factor = r2g / (r4g + gamma_iso);
-    //                 tangent_matrix(0, 0) = r2g * (1.0 - factor);
-    //                 tangent_matrix(0, 1) = 0.0;
-    //                 tangent_matrix(0, 2) = r2g * factor;
-    //                 tangent_matrix(1, 0) = 0.0;
-    //                 tangent_matrix(1, 1) = r2g;
-    //                 tangent_matrix(1, 2) = 0.0;
-    //                 tangent_matrix(2, 0) = r2g * factor;
-    //                 tangent_matrix(2, 1) = 0.0;
-    //                 tangent_matrix(2, 2) = tangent_matrix(0, 0);
-    //             }
-    //
-    //             // Map the tangent matrix back to the fourth-order tensors
-    //             map_voigt_to_tensor(tangent_matrix, stress_strain_tensor);
-    //             map_voigt_to_tensor(tangent_matrix, stress_strain_tensor_linearized);
-    //         }
-    //         else
-    //         {
-    //             // Elastic step
-    //             stress_strain_tensor = stress_strain_tensor_mu;
-    //             stress_strain_tensor_linearized = stress_strain_tensor_mu;
-    //         }
-    //
-    //         // Add the bulk modulus components to both tangent tensors
-    //         stress_strain_tensor += stress_strain_tensor_kappa;
-    //         stress_strain_tensor_linearized += stress_strain_tensor_kappa;
-    //     }
-    //     else
-    //     {
-    //         AssertThrow(false, ExcNotImplemented());
-    //     }
-    // }
-
-
-
-    template <int dim>
-    void ConstitutiveLaw<dim>::get_linearized_stress_strain_tensors(
-        const SymmetricTensor<2, dim>& strain_tensor,
-        SymmetricTensor<2, dim>& stress_tensor,
-        SymmetricTensor<4, dim>& stress_strain_tensor_linearized,
-        SymmetricTensor<4, dim>& stress_strain_tensor,
-        std::string yield_criteria,
-        std::string hardening_law) const
-    {
-        Assert(dim == 3, ExcNotImplemented()); // checking if the code is being run in 3D
-
-        stress_tensor = (stress_strain_tensor_kappa + stress_strain_tensor_mu) * strain_tensor;
-
-        stress_strain_tensor = stress_strain_tensor_mu;
-        stress_strain_tensor_linearized = stress_strain_tensor_mu;
-
-        if (yield_criteria == "Von-Mises")
-        {
-            SymmetricTensor<2, dim> deviator_stress_tensor = deviator(stress_tensor);
-            const double deviator_stress_tensor_norm = deviator_stress_tensor.norm();
-
-            if (deviator_stress_tensor_norm > sigma_0)
-            {
-                const double beta = sigma_0 / deviator_stress_tensor_norm;
-
-                if (hardening_law == "isotropic")
-                {
-                    // Isotropic hardening
-                    stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
-                    stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
-                }
-                else if (hardening_law == "kinematic")
-                {
-                    // Kinematic hardening
-                    backstress_tensor += gamma_kin * deviator(stress_tensor);
-                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
-                }
-
-                deviator_stress_tensor /= deviator_stress_tensor_norm;
-
-                stress_strain_tensor_linearized -=
-                    (1 - gamma_iso) * beta * 2 * mu * outer_product(deviator_stress_tensor, deviator_stress_tensor);
-            }
-
-            stress_strain_tensor += stress_strain_tensor_kappa;
-            stress_strain_tensor_linearized += stress_strain_tensor_kappa;
-        }
-        else if (yield_criteria == "Tresca")
-        {
-            auto principal_stresses = eigenvalues(stress_tensor);
-            std::sort(principal_stresses.begin(), principal_stresses.end());
-
-            const double sigma_max = principal_stresses[dim - 1];
-            const double sigma_min = principal_stresses[0];
-            const double max_shear_stress = 0.5 * (sigma_max - sigma_min);
-
-            if (max_shear_stress > (sigma_0 / 2))
-            {
-                const double beta = (sigma_0 / 2) / max_shear_stress;
-
-                if (hardening_law == "isotropic")
-                {
-                    // Isotropic hardening
-                    stress_strain_tensor *= (gamma_iso + (1 - gamma_iso) * beta);
-                    stress_strain_tensor_linearized *= (gamma_iso + (1 - gamma_iso) * beta);
-                }
-                else if (hardening_law == "kinematic")
-                {
-                    // Kinematic hardening
-                    backstress_tensor += gamma_kin * unit_symmetric_tensor<dim>() * (sigma_max - sigma_min);
-                    stress_tensor -= backstress_tensor; // Subtract backstress tensor
-                }
-
-                // Linearize based on the principal stresses
-                SymmetricTensor<2, dim> principal_stress_tensor;
-                for (unsigned int i = 0; i < principal_stresses.size(); ++i)
-                    principal_stress_tensor[i][i] = principal_stresses[i];
-
-                stress_strain_tensor_linearized -=
-                    (1 - gamma_iso) * beta * 2 * mu * outer_product(principal_stress_tensor, principal_stress_tensor);
-            }
-
-            stress_strain_tensor += stress_strain_tensor_kappa;
-            stress_strain_tensor_linearized += stress_strain_tensor_kappa;
-        }
-        else
-        {
-            AssertThrow(false, ExcNotImplemented());
-        }
     }
 
 
