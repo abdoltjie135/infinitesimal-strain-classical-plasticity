@@ -75,7 +75,7 @@ namespace PlasticityModel
         SymmetricTensor<2, dim> get_stress() const;
         void set_stress(const SymmetricTensor<2, dim> &stress);
 
-        // TODO: I am not sure if these should be private or public
+        // NOTE: I am not sure if these should be private or public
         SymmetricTensor<2, dim> elastic_strain;
         double accumulated_plastic_strain;
         double e_v1;
@@ -86,7 +86,7 @@ namespace PlasticityModel
         SymmetricTensor<2, dim> stress;
     };
 
-    // TODO: I am not sure if the following function is needed
+    // NOTE: I am not sure if the point history class was setup in the best way possible
     template <int dim>
     void PointHistory<dim>::setup(const SymmetricTensor<2, dim> &initial_stress)
     {
@@ -123,9 +123,10 @@ namespace PlasticityModel
         const SymmetricTensor<2, dim>& delta_strain, SymmetricTensor<4, dim>& stress_strain_tensor,
         std::shared_ptr<PointHistory<dim>> &qph, std::string yield_criteria, std::string hardening_law) const;
 
-        // FIXME: The following declaration along with the function definition below may not be correct
-        void derivative_of_isotropic_tensor(Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
-            bool is_two_vector_return, bool is_right_corner) const;
+        // NOTE: The following declaration along with the function definition below may not be correct
+        Tensor<4, dim> derivative_of_isotropic_tensor(Vector<double> elastic_strain_trial_eigenvalues,
+            Tensor<2, dim> elastic_strain_trial_eigenvectors_matrix, Tensor<2, dim>, Tensor<2, dim> Y,
+            Tensor<2, dim> dy_dx) const;
         // X - stress tensor
         // Y - strain tensor
         // the type of return mapping is needed therefore the two boolean variables are being passed as variables
@@ -232,7 +233,6 @@ namespace PlasticityModel
     //  arrange the principal values on the diagonal of a tensor
     //  and then return a tensor that is the eigenvectors tensor times by principal values tensor times by the transpose
     //  of the eigenvectors tensor
-
     // Function to reconstruct the tensor from principal values and sorted eigenvectors in the original co-ordinate system
     template <int dim>
     SymmetricTensor<2, dim> reconstruct_tensor(const std::array<double, dim> &principal_values,
@@ -256,10 +256,10 @@ namespace PlasticityModel
                 reconstructed_tensor[i][j] = sum;
             }
         }
-
         return reconstructed_tensor;
     }
 
+    // TODO: Create a yield stress function
     // Function which computes the yield stress
     double yield_stress(double sigma_y_old , double H, double epsilon_p)
     {
@@ -270,7 +270,6 @@ namespace PlasticityModel
     // TODO: Pass the quadrature point history as an argument to this function
     // TODO: The Von_Mises yield criteria should still be added
     //  both yield criteria should work with either isotropic or kinematic hardening
-
     template <int dim>
     bool ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
         const SymmetricTensor<2, dim>& elastic_strain_n,
@@ -287,11 +286,11 @@ namespace PlasticityModel
         double poisson_ratio = nu;
         const double yield_stress_0 = sigma_0;
         // TODO: Add some comments to relate code variable names to the ones in textbook
-        double shear_modulus = mu;               // G in the textbook
-        double bulk_modulus = kappa;             // K in the textbook
-        const double r2g = 2.0 * shear_modulus;  // 2 * G
-        const double r4g = 4.0 * shear_modulus;  // 4 * G
-        const double hardening_modulus = gamma_iso; // H - this can not be const for non-linear isotropic hardening
+        double shear_modulus = mu;                   // G in the textbook
+        double bulk_modulus = kappa;                 // K in the textbook
+        const double r2g = 2.0 * shear_modulus;      // 2 * G
+        const double r4g = 4.0 * shear_modulus;      // 4 * G
+        const double hardening_modulus = gamma_iso;  // H - this can not be const for non-linear isotropic hardening
 
         double accumulated_plastic_strain_n = 0.0;
 
@@ -300,11 +299,12 @@ namespace PlasticityModel
         bool is_right_corner;
 
         // Elastic Predictor Step (Box 8.1, Step i) from the textbook
-        // TODO: Need to extract the eigenvectors of the following tensor because it is needed to contruct the stress
+        // NOTE: Need to extract the eigenvectors of the following tensor because it is needed to construct the stress
         //  tensor at the step n+1
-        // TODO: The elastic trial strain will be passed as a parameter to this function
+        // NOTE: The elastic trial strain will be passed as a parameter to this function
         SymmetricTensor<2, dim> elastic_strain_trial = elastic_strain_n + delta_strain; // ε_n+1^trial
 
+        // NOTE: The following does not have any usages
         auto elastic_strain_trial_eigenvector_pairs =
             compute_principal_values_vectors(elastic_strain_trial);
         auto elastic_strain_trial_eigenvalues = elastic_strain_trial_eigenvector_pairs.first;
@@ -319,8 +319,6 @@ namespace PlasticityModel
         // Spectral decomposition (Box 8.1, Step ii) from the textbook
         auto s_trial_eigenvalues = compute_principal_values(deviatoric_stress_trial);
 
-        // TODO: Create a yield stress function
-
         // Plastic admissibility check (Box 8.1, Step iii) from the textbook
         double phi = s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] -
             yield_stress(yield_stress_0, hardening_modulus, accumulated_plastic_strain_trial);
@@ -331,28 +329,29 @@ namespace PlasticityModel
         // storing ds/de
         //  s is the deviatoric principal stresses
         //  e is the deviatoric elastic strain tensor
-        // FIXME: Not sure if the following should be a symmetric tensor (this has been checked)
+        // NOTE: Not sure if the following should be a symmetric tensor (this has been checked)
         Tensor<2, dim> ds_de;
-        SymmetricTensor<2, dim> dsigma_de;
+        Tensor<2, dim> dsigma_de;
 
         if (phi <= 0)
         {
             // Elastic step
             // Set the values at n+1 to the trial values
-            SymmetricTensor<2, dim> elastic_strain_n1 = elastic_strain_trial;
+            Tensor<2, dim> elastic_strain_n1 = elastic_strain_trial;
             double accumulated_plastic_strain_n1 = accumulated_plastic_strain_trial;
             double e_v_n1 = e_v_trial;
             double p_n1 = p_trial;
-            SymmetricTensor<2, dim> deviatoric_stress_n1 = deviatoric_stress_trial;
+            Tensor<2, dim> deviatoric_stress_n1 = deviatoric_stress_trial;
 
             // TODO: save intermediate values to quadrature point history
-            qph.elastic_strain = elastic_strain_n1;
-            qph.accumulated_plastic_strain = accumulated_plastic_strain_n1;
-            qph.e_v = e_v_n1;
-            qph.p = p_n1;
-            qph.deviatoric_stress = deviatoric_stress_n1;
+            qph->elastic_strain = elastic_strain_n1;
+            qph->accumulated_plastic_strain = accumulated_plastic_strain_n1;
+            qph->e_v = e_v_n1;
+            qph->p = p_n1;
+            qph->deviatoric_stress = deviatoric_stress_n1;
 
-            // FIXME: I think the following is exiting the function but not sure if this is being done correctly (this has been checked)
+            // FIXME: I think the following is exiting the function but not sure if this is being done correctly
+            //  (this has been checked)
             return false;
         }
 
@@ -366,7 +365,7 @@ namespace PlasticityModel
         // Initially say it is going to be a two-vector return
         bool local_newton_converged_one_v = false;
 
-        // TODO: You can solve this in closed form therefore we do not need the Newton loop
+        // TODO: You can solve this in closed form for linear isotropic hardening therefore we do not need the Newton loop
         //  can solve delta_gamma directly
         // One-vector return to main plane (Box 8.2) from the textbook
         for (unsigned int iteration = 0; iteration < 50; ++iteration)
@@ -379,7 +378,7 @@ namespace PlasticityModel
             double delta_gamma =- residual / residual_derivative;  // new guess for delta_gamma
 
             // Compute the residual (Box 8.2, Step ii)
-            // FIXME: Not sure if my function for the residual is correct
+            // NOTE: Not sure if my function for the residual is correct
             double residual = s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] - 4.0 * shear_modulus * delta_gamma
             - yield_stress(yield_stress_0, hardening_modulus,
                 accumulated_plastic_strain_n + delta_gamma);;
@@ -401,7 +400,7 @@ namespace PlasticityModel
         AssertThrow(local_newton_converged_one_v,
             ExcMessage("Newton iteration did not converge for one-vector return"));
 
-        // FIXME: I am not sure if the updated s values are accessible below
+        // NOTE: I am not sure if the updated s values are accessible below
         // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b) from the textbook
         if (s1 >= s2 && s2 >= s3)
         {
@@ -409,17 +408,13 @@ namespace PlasticityModel
 
             double f = 2 * shear_modulus / (4 * shear_modulus + hardening_modulus);
 
-            //  TODO: some of these are commented out becuase the tensor is initialized as 0
+            //  NOTE: some of these are commented out because the tensor is initialized as 0
             // This relates to equation 8.4.1 in the textbook
             ds_de[0][0] = 2 * shear_modulus * (1 - f);
             ds_de[0][2] = 2 * shear_modulus * f;
             ds_de[1][1] = 2 * shear_modulus;
             ds_de[2][0] = 2 * shear_modulus * f;
             ds_de[2][2] = 2 * shear_modulus * (1 - f);
-
-            // FIXME: I am not sure if the following will exit the function (this has been checked)
-            // FIXME: Might not be good to exit the function at this point therefore no 'return' statement
-            // return true;
         }
         else
         {
@@ -487,7 +482,7 @@ namespace PlasticityModel
 
             double s_a = s_trial_eigenvalues[0] - s_trial_eigenvalues[2];
 
-            // TODO: The function for the yield stress will look different for nonlinear isotropic hardening
+            // NOTE: The function for the yield stress will look different for nonlinear isotropic hardening
             Vector<double> residual_vector(2);
             residual_vector[0] = s_a - yield_stress(yield_stress_0, hardening_modulus,
                 accumulated_plastic_strain_n);
@@ -502,11 +497,11 @@ namespace PlasticityModel
                 double delta_gamma_sum = delta_gamma_vector[0] + delta_gamma_vector[1];
                 double accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma_sum;
 
-                // FIXME: The hardening slope is constant for linear isotropic hardening
+                // TODO: The hardening slope is constant for linear isotropic hardening
                 //  This will need to be made general later
                 double H = hardening_modulus;
 
-                // FIXME: I can not take the inverse of d_matrix
+                // FIXME: I can not take the inverse of d_matrix (this has been checked)
                 FullMatrix<double> d_matrix(2, 2);
                 d_matrix(0, 0) = -4.0 * shear_modulus - H;
                 d_matrix(0, 1) = -2.0 * shear_modulus - H;
@@ -548,7 +543,7 @@ namespace PlasticityModel
             }
 
             // TODO: Add the Assert to check if it converged
-            //  not sure if it is correct
+            // NOTE: I am not sure if the Assert is working as intended
             AssertThrow(abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance,
                 ExcMessage("Two-vector return did not converge"));
         }
@@ -557,20 +552,19 @@ namespace PlasticityModel
         double p_n1 = p_trial;
 
         // deviatoric stress in the principal directions
-        SymmetricTensor<2, dim> s_n1;
+        Tensor<2, dim> s_n1;
         s_n1[0][0] = s1;
         s_n1[1][1] = s2;
         s_n1[2][2] = s3;
 
-        SymmetricTensor<2, dim> stress_n1 = s_n1 + p_n1 * identity_tensor<dim>();
+        Tensor<2, dim> stress_n1 = s_n1 + p_n1 * identity_tensor<dim>();
 
         // TODO: The equation for the updated elastic strain needs to be completed
         //  the deviatoric principal stresses and directions are needed
         // TODO: Add the following to the quadrature point history
         //  when they are being outputted you want to output them in the reference configuration
         //  this would probably want to be done at the end of the function for all the variables
-
-        SymmetricTensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * s_n1 +
+        Tensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * s_n1 +
             (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
         // Adding state variables to the quadrature point history
@@ -579,9 +573,9 @@ namespace PlasticityModel
         qph->stress = stress_n1;
         qph->p = p_n1;
 
-        // FIXME: Ensure that these loops are working correctly
-        // FIXME: move to the end
-        // The brackets after the first for loop are not necessary
+        // TODO: Ensure that these loops are working correctly
+        //  move to the end of the function
+        // NOTE: The brackets after the first for loop are not necessary
         // Equation 8.46 from textbook
         for (unsigned int i = 0; i < 3; ++i) // Iterate over i
         {
@@ -597,7 +591,6 @@ namespace PlasticityModel
                 }
             }
         }
-
         return true;
     }
 
@@ -608,19 +601,32 @@ namespace PlasticityModel
     //  the bools will no longer be needed because they are dependant on the return-mapping chosen
     //  the function should output the 4th order tensor instead of the void
     template <int dim>
-    void ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
-        Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx,
-        bool is_two_vector_return, bool is_right_corner) const
+    Tensor<4, dim> ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
+        Vector<double> elastic_strain_trial_eigenvalues, Tensor<2, dim> elastic_strain_trial_eigenvectors_matrix,
+        Tensor<2, dim> elastic_trial_strain, Tensor<2, dim> Y, Tensor<2, dim> dy_dx) const
     {
+        // Y - pass the stress at n+1
+        // dy_dx - pass then dsigma_de
+
         // The following was extracted from appendix A in the textbook
 
         // FIXME: The eigenvalues and eigenvectors do not need to be computed again but can be passed as a variable
         //  to the function
         // The following functions which are used to get eigenvalues and eigenvectors
         // also sorts them in descending order
-        auto x = compute_principal_values(X);                 // Eigenvalues from X
-        auto y = compute_principal_values(Y);                 // Eigenvalues from Y
-        auto e = compute_principal_values_vectors(X).second;  // Eigenvectors from X
+        auto e = elastic_strain_trial_eigenvectors_matrix;  // Eigenvectors from X
+
+        Tensor<2, dim> X = elastic_trial_strain;
+
+        Vector<double> x;
+        x[0] = elastic_strain_trial_eigenvalues[0];
+        x[1] = elastic_strain_trial_eigenvalues[1];
+        x[2] = elastic_strain_trial_eigenvalues[2];
+
+        Vector<double> y;
+        y[0] = Y[0][0];
+        y[1] = Y[1][1];
+        y[2] = Y[2][2];
 
         // Calculate the 4th-order tensor d[X^2]/dX_ijkl as per equation A.46 in the textbook
         Tensor<4, dim> dX2_dX;
@@ -716,6 +722,7 @@ namespace PlasticityModel
             }
 
             // TODO: These need to be checked if they are mathematically correct
+            // The following are not deviatoric stress values
             double s1 = (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2])) +
                         (1 / (x[0] - x[2])) * ((dy_dx[2][0] - dy_dx[2][1]) - (dy_dx[2][0] - dy_dx[2][2]));
 
@@ -752,6 +759,7 @@ namespace PlasticityModel
             D = (dy_dx[0][0] - dy_dx[0][1]) * identity_tensor<dim>() +
                 dy_dx[0][1] * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
         }
+        return D;
     }
 
 
