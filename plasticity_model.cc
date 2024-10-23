@@ -129,7 +129,7 @@ namespace PlasticityModel
         // The following function performs the return-mapping algorithm and determines the derivative of stress with
         // respect to strain based off of whether a one-vector or a two-vector return was used
         bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim>& elastic_strain_n,
-        const SymmetricTensor<2, dim>& delta_strain, SymmetricTensor<4, dim>& stress_strain_tensor,
+        const SymmetricTensor<2, dim>& delta_strain, SymmetricTensor<4, dim>& consistent_tangent_operator,
         std::shared_ptr<PointHistory<dim>> &qph, std::string yield_criteria, std::string hardening_law) const;
 
         // NOTE: The following declaration along with the function definition below may not be correct
@@ -245,6 +245,7 @@ namespace PlasticityModel
                                                const Tensor<2, dim> &eigenvectors_tensor)
     {
         Tensor<2, dim> principal_values_tensor = reconstruct_tensor(principal_values, eigenvectors_tensor);
+        // TODO: Add a check to ensure that it is not a symmetric tensor already
         return SymmetricTensor<2, dim> (principal_values_tensor);
     }
 
@@ -253,12 +254,10 @@ namespace PlasticityModel
                                               const Tensor<2, dim> &eigenvectors_tensor)
     {
         Tensor<2, dim> principal_values_tensor;
-
         for (unsigned int i = 0; i < dim; ++i)
         {
             principal_values_tensor[i][i] = principal_values[i];
         }
-
         return eigenvectors_tensor * principal_values_tensor * transpose(eigenvectors_tensor);
     }
 
@@ -277,7 +276,7 @@ namespace PlasticityModel
     bool ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
         const SymmetricTensor<2, dim>& elastic_strain_n,
         const SymmetricTensor<2, dim>& delta_strain,
-        SymmetricTensor<4, dim>& stress_strain_tensor,
+        SymmetricTensor<4, dim>& consistent_tangent_operator,
         std::shared_ptr<PointHistory<dim>> &qph,
         std::string yield_criteria,
         std::string hardening_law) const
@@ -291,8 +290,8 @@ namespace PlasticityModel
         // TODO: Add some comments to relate code variable names to the ones in textbook
         double shear_modulus = mu;                   // G in the textbook
         double bulk_modulus = kappa;                 // K in the textbook
-        const double r2g = 2.0 * shear_modulus;      // 2 * G
-        const double r4g = 4.0 * shear_modulus;      // 4 * G
+        const double r2g = 2.0 * shear_modulus;      // 2G
+        const double r4g = 4.0 * shear_modulus;      // 4G
         const double hardening_modulus = gamma_iso;  // H - this can not be const for non-linear isotropic hardening
 
         double accumulated_plastic_strain_n = 0.0;
@@ -572,6 +571,7 @@ namespace PlasticityModel
 
         // Adding state variables to the quadrature point history
         // TODO: Change to forward arrows when writing to the shared pointer
+        // TODO: Add the other variables to the point history
         qph->elastic_strain = elastic_strain_n1;
         qph->stress = stress_n1;
         qph->p = p_n1;
@@ -580,8 +580,7 @@ namespace PlasticityModel
         //  move to the end of the function
         // NOTE: The brackets after the first for loop are not necessary
         // Equation 8.46 from textbook
-        for (unsigned int i = 0; i < 3; ++i) // Iterate over i
-        {
+        for (unsigned int i = 0; i < 3; ++i) // Iterate over i (curly brackets after this for loop are not needed)
             for (unsigned int j = 0; j < 3; ++j) // Iterate over j
             {
                 dsigma_de[i][j] = bulk_modulus;
@@ -593,9 +592,9 @@ namespace PlasticityModel
                     dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
                 }
             }
-        }
+
         // TODO: Change the variable name of the stress_strain_tensor
-        stress_strain_tensor = derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
+        consistent_tangent_operator = derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
             elastic_strain_trial_eigenvectors_matrix, elastic_strain_trial, stress_n1, dsigma_de);
         return true;
     }
@@ -761,7 +760,7 @@ namespace PlasticityModel
         return D;
     }
 
-
+    // NOTE: Everything in this namespace could be useless
     namespace EquationData
     {
         template <int dim>
@@ -1280,9 +1279,6 @@ namespace PlasticityModel
         FEValues<dim> fe_values(fe, quadrature_formula,
                                 update_values | update_gradients | update_JxW_values);
 
-        FEFaceValues<dim> fe_values_face(fe, face_quadrature_formula,
-                                         update_values | update_quadrature_points | update_JxW_values);
-
         const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
         const unsigned int n_q_points = quadrature_formula.size();
 
@@ -1291,9 +1287,6 @@ namespace PlasticityModel
 
         std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
         std::vector<SymmetricTensor<2, dim>> strain_tensor(n_q_points);
-
-        // Create a stress storage for each quadrature point
-        std::vector<SymmetricTensor<2, dim>> stress_at_q_points(n_q_points);
 
         const FEValuesExtractors::Vector displacement(0);
 
@@ -1313,52 +1306,35 @@ namespace PlasticityModel
 
                 for (unsigned int q_point = 0; q_point < n_q_points; ++q_point)
                 {
-                    SymmetricTensor<4, dim> stress_strain_tensor_linearized;
-                    SymmetricTensor<4, dim> stress_strain_tensor;
+                    SymmetricTensor<4, dim> consistent_tangent_operator;
                     SymmetricTensor<2, dim> stress_tensor;
 
-                    // Compute the stress using the constitutive law
-                    // constitutive_law.get_linearized_stress_strain_tensors(
-                    //     strain_tensor[q_point], stress_tensor, stress_strain_tensor_linearized,
-                    //     stress_strain_tensor, yield_criteria, hardening_law);
-
-                    // NOTE: stress_strain_tensor should actually be the consistent tangent tensor
+                    // Compute the consistent tangent operator using the return mapping
                     constitutive_law.return_mapping_and_derivative_stress_strain(
-                        strain_tensor[q_point], stress_at_q_points[q_point], stress_strain_tensor,
-                        yield_criteria, hardening_law);
+                    strain_tensor[q_point], delta_strain_tensor[q_point],
+                    consistent_tangent_operator, qph, yield_criteria, hardening_law);
 
-                    // Store the computed stress in the PointHistory
-                    quadrature_point_history[cell_index + q_point]->set_stress(stress_tensor);
-
+                    // Assemble element tangent stiffness matrix K_T = ∑ w_i * j_i * (B_i^T * D_i * B_i)
                     for (unsigned int i = 0; i < dofs_per_cell; ++i)
                     {
-                        const SymmetricTensor<2, dim> stress_phi_i =
-                            stress_strain_tensor_linearized *
-                                fe_values[displacement].symmetric_gradient(i, q_point);
-
                         for (unsigned int j = 0; j < dofs_per_cell; ++j)
                         {
-                            cell_matrix(i, j) += (stress_phi_i *
-                                fe_values[displacement].symmetric_gradient(j, q_point) *
-                                fe_values.JxW(q_point));
-                        }
+                            // B_i and B_j terms are computed from shape function gradients
+                            const Tensor<2, dim> B_i = fe_values[displacement].gradient(i, q_point);
+                            const Tensor<2, dim> B_j = fe_values[displacement].gradient(j, q_point);
 
-                        cell_rhs(i) += ((stress_phi_i - stress_strain_tensor *
-                            fe_values[displacement].symmetric_gradient(i, q_point)) *
-                            strain_tensor[q_point] * fe_values.JxW(q_point));
+                            cell_matrix(i, j) += B_i * consistent_tangent_operator * transpose(B_j) * fe_values.JxW(q_point);
+                        }
                     }
                 }
 
-                // Get the degrees of freedom indices and distribute local to global
                 cell->get_dof_indices(local_dof_indices);
-                all_constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices,
-                    newton_matrix, newton_rhs, true);
+                all_constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices, newton_matrix, newton_rhs);
             }
-        }
 
-        // Compress the matrix and right-hand side vector
-        newton_matrix.compress(VectorOperation::add);
-        newton_rhs.compress(VectorOperation::add);
+            newton_matrix.compress(VectorOperation::add);
+            newton_rhs.compress(VectorOperation::add);
+        }
     }
 
 
@@ -1367,85 +1343,53 @@ namespace PlasticityModel
     // material's stress response) and the external forces (such as boundary conditions). The residual is crucial in
     // the Newton-Raphsonn method, which iteratively solves nonlinear systems by minimizing the residual.
     // The residual needs to be minimized due to balances of forces.
+    // Simplified version of compute_nonlinear_residual function
     template <int dim>
-    void PlasticityProblem<dim>::compute_nonlinear_residual(const TrilinosWrappers::MPI::Vector& linearization_point)
+    void PlasticityProblem<dim>::compute_nonlinear_residual(const TrilinosWrappers::MPI::Vector &linearization_point)
     {
-        const QGauss<dim> quadrature_formula(fe.degree + 1);
-        const QGauss<dim - 1> face_quadrature_formula(fe.degree + 1);
+        TimerOutput::Scope t(computing_timer, "Computing residual");
 
-        FEValues<dim> fe_values(fe,
-                                quadrature_formula,
-                                update_values | update_gradients |
-                                update_JxW_values);
-
-        FEFaceValues<dim> fe_values_face(fe,
-                                         face_quadrature_formula,
-                                         update_values | update_quadrature_points |
-                                         update_JxW_values);
+        const QGauss<dim> quadrature_formula(fe_degree + 1);
+        FEValues<dim> fe_values(fe, quadrature_formula, update_values | update_gradients | update_JxW_values);
 
         const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
         const unsigned int n_q_points = quadrature_formula.size();
-        const unsigned int n_face_q_points = face_quadrature_formula.size();
-
-        const EquationData::BoundaryForce<dim> boundary_force;
-        std::vector<Vector<double>> boundary_force_values(n_face_q_points, Vector<double>(dim));
 
         Vector<double> cell_rhs(dofs_per_cell);
-
         std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+        std::vector<SymmetricTensor<2, dim>> strain_tensor(n_q_points);
 
         const FEValuesExtractors::Vector displacement(0);
 
         newton_rhs = 0;
-        newton_rhs_uncondensed = 0;
 
-        fraction_of_plastic_q_points_per_cell = 0;
-
-        for (const auto& cell : dof_handler.active_cell_iterators())
+        for (const auto &cell : dof_handler.active_cell_iterators())
+        {
             if (cell->is_locally_owned())
             {
                 fe_values.reinit(cell);
                 cell_rhs = 0;
 
-                std::vector<SymmetricTensor<2, dim>> strain_tensors(n_q_points);
-                fe_values[displacement].get_function_symmetric_gradients(
-                    linearization_point, strain_tensors);
+                // Get strains at each quadrature point
+                fe_values[displacement].get_function_symmetric_gradients(linearization_point, strain_tensor);
 
                 for (unsigned int q_point = 0; q_point < n_q_points; ++q_point)
                 {
-                    SymmetricTensor<4, dim> stress_strain_tensor;
-                    const bool q_point_is_plastic = constitutive_law.get_stress_strain_tensor(
-                        strain_tensors[q_point], stress_strain_tensor, yield_criteria, hardening_law);
-                    if (q_point_is_plastic)
-                        ++fraction_of_plastic_q_points_per_cell(
-                            cell->active_cell_index());
+                    SymmetricTensor<2, dim> stress_tensor;
+                    constitutive_law.compute_stress(strain_tensor[q_point], stress_tensor);
 
                     for (unsigned int i = 0; i < dofs_per_cell; ++i)
                     {
-                        cell_rhs(i) -=
-                        (strain_tensors[q_point] * stress_strain_tensor *
-                            fe_values[displacement].symmetric_gradient(i, q_point) *
-                            fe_values.JxW(q_point));
-
-                        Tensor<1, dim> rhs_values;
-                        rhs_values = 0; // this represents the boundary forces applied to the system
-                        cell_rhs(i) += (fe_values[displacement].value(i, q_point) *
-                            rhs_values * fe_values.JxW(q_point));
+                        cell_rhs(i) -= stress_tensor * fe_values[displacement].symmetric_gradient(i, q_point) * fe_values.JxW(q_point);
                     }
                 }
 
-                // distribute local to global
                 cell->get_dof_indices(local_dof_indices);
-                constraints_dirichlet_and_hanging_nodes.distribute_local_to_global(
-                    cell_rhs, local_dof_indices, newton_rhs);
-
-                for (unsigned int i = 0; i < dofs_per_cell; ++i)
-                    newton_rhs_uncondensed(local_dof_indices[i]) += cell_rhs(i);
+                all_constraints.distribute_local_to_global(cell_rhs, local_dof_indices, newton_rhs);
             }
+        }
 
-        fraction_of_plastic_q_points_per_cell /= quadrature_formula.size();
         newton_rhs.compress(VectorOperation::add);
-        newton_rhs_uncondensed.compress(VectorOperation::add);
     }
 
 
@@ -1454,18 +1398,9 @@ namespace PlasticityModel
     {
         TimerOutput::Scope t(computing_timer, "Solve");
 
-        TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs,
-                                                           mpi_communicator);
-        // holds the solution that will be distributed across different processes
-        // in parallel computing
-        distributed_solution = solution;
-
-        constraints_hanging_nodes.set_zero(distributed_solution);
-        constraints_hanging_nodes.set_zero(newton_rhs);
+        TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
 
         // The following is a preconditioner setup. This accelerates the convergence of the iterative solver.
-        // It helps with improving the efficiency and stability of teh solution process, particularly for
-        // large and complex systems.
         TrilinosWrappers::PreconditionAMG preconditioner; // AMG preconditioner
         {
             TimerOutput::Scope t(computing_timer, "Solve: setup preconditioner");
@@ -1488,7 +1423,7 @@ namespace PlasticityModel
             preconditioner.initialize(newton_matrix, additional_data);
         }
 
-        // the following solves the linear system
+        // Solve the linear system to find the Newton increment
         {
             TimerOutput::Scope t(computing_timer, "Solve: iterate");
 
@@ -1496,25 +1431,27 @@ namespace PlasticityModel
 
             const double relative_accuracy = 1e-8;
             const double solver_tolerance = relative_accuracy *
-                newton_matrix.residual(tmp, distributed_solution, newton_rhs);
+                                            newton_matrix.residual(tmp, newton_increment, newton_rhs);
 
             SolverControl solver_control(newton_matrix.m(), solver_tolerance);
             SolverBicgstab<TrilinosWrappers::MPI::Vector> solver(solver_control);
-            // solve the system
+
+            // Solve the system: newton_matrix * newton_increment = newton_rhs
             solver.solve(newton_matrix,
-                         distributed_solution,
+                         newton_increment,
                          newton_rhs,
                          preconditioner);
 
             pcout << "         Error: " << solver_control.initial_value() << " -> "
-                << solver_control.last_value() << " in "
-                << solver_control.last_step() << " Bicgstab iterations."
-                << std::endl;
+                  << solver_control.last_value() << " in "
+                  << solver_control.last_step() << " Bicgstab iterations."
+                  << std::endl;
         }
 
-        all_constraints.distribute(distributed_solution);
+        all_constraints.distribute(newton_increment);
 
-        solution = distributed_solution;
+        // Update solution: u^(k+1) = u^(k) + δu^(k)
+        solution += newton_increment;
     }
 
 
@@ -1531,12 +1468,16 @@ namespace PlasticityModel
         double previous_residual_norm = -std::numeric_limits<double>::max();
 
         const double correct_sigma = sigma_0;
+        const double tolerance = 1e-10; // Convergence tolerance for the residual norm
+
+        TrilinosWrappers::MPI::Vector external_force(locally_owned_dofs, mpi_communicator);
+        // Assume external_force is computed or provided elsewhere in the code
 
         for (unsigned int newton_step = 1; newton_step <= 100; ++newton_step)
         {
             if (newton_step <= 2 &&
                 ((transfer_solution && current_refinement_cycle == 0) ||
-                    !transfer_solution))
+                 !transfer_solution))
                 constitutive_law.set_sigma_0(correct_sigma);
 
             pcout << ' ' << std::endl;
@@ -1550,70 +1491,32 @@ namespace PlasticityModel
             pcout << "      Solving system... " << std::endl;
             solve_newton_system();
 
-            if (newton_step == 1 ||
-                (transfer_solution && newton_step == 2 && current_refinement_cycle == 0) ||
-                (!transfer_solution && newton_step == 2))
+            compute_nonlinear_residual(solution);
+            old_solution = solution;
+
+            residual = newton_rhs;
+            const unsigned int start_res = (residual.local_range().first),
+                               end_res = (residual.local_range().second);
+            for (unsigned int n = start_res; n < end_res; ++n)
+                if (all_constraints.is_inhomogeneously_constrained(n))
+                    residual(n) = 0;
+
+            residual.compress(VectorOperation::insert);
+
+            residual_norm = residual.l2_norm();
+            double external_force_norm = external_force.l2_norm();
+            double relative_residual = residual_norm / external_force_norm;
+
+            pcout << "      Relative residual norm: " << relative_residual << std::endl;
+
+            // Step x: Check for convergence using relative residual
+            if (relative_residual < tolerance)
             {
-                compute_nonlinear_residual(solution);
-                old_solution = solution;
-
-                residual = newton_rhs;
-                const unsigned int start_res = (residual.local_range().first),
-                                   end_res = (residual.local_range().second);
-                for (unsigned int n = start_res; n < end_res; ++n)
-                    if (all_constraints.is_inhomogeneously_constrained(n))
-                        residual(n) = 0;
-
-                residual.compress(VectorOperation::insert);
-
-                residual_norm = residual.l2_norm();
-
-                pcout << "      Accepting Newton solution with residual: " << residual_norm << std::endl;
-            }
-            else
-            {
-                for (unsigned int i = 0; i < 5; ++i)
-                {
-                    distributed_solution = solution;
-
-                    const double alpha = std::pow(0.5, static_cast<double>(i));
-                    tmp_vector = old_solution;
-                    tmp_vector.sadd(1 - alpha, alpha, distributed_solution);
-
-                    TimerOutput::Scope t(computing_timer, "Residual and lambda");
-
-                    locally_relevant_tmp_vector = tmp_vector;
-                    compute_nonlinear_residual(locally_relevant_tmp_vector);
-                    residual = newton_rhs;
-
-                    const unsigned int start_res = (residual.local_range().first),
-                                       end_res = (residual.local_range().second);
-                    for (unsigned int n = start_res; n < end_res; ++n)
-                        if (all_constraints.is_inhomogeneously_constrained(n))
-                            residual(n) = 0;
-
-                    residual.compress(VectorOperation::insert);
-
-                    residual_norm = residual.l2_norm();
-
-                    pcout
-                        << "      Residual of the non-contact part of the system: "
-                        << residual_norm << std::endl
-                        << "         with a damping parameter alpha = " << alpha
-                        << std::endl;
-
-                    if (residual_norm < previous_residual_norm)
-                        break;
-                }
-
-                solution = tmp_vector;
-                old_solution = solution;
+                pcout << "      Convergence achieved with relative residual norm: " << relative_residual << std::endl;
+                break;
             }
 
             previous_residual_norm = residual_norm;
-
-            if (residual_norm < 1e-10)
-                break;
         }
     }
 
