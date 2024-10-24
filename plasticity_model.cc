@@ -85,10 +85,10 @@ namespace PlasticityModel
 
         // A setter allows controlled modification of a private or protected member variable, typically
         // ensuring that the data being set is valid or consistent
-        void set_stress(const Tensor<2, dim> &stress);
-        void set_elastic_strain(const Tensor<2, dim> &elastic_strain);
-        void set_plastic_strain(const Tensor<2, dim> &plastic_strain);
-        void set_back_stress(const Tensor<2, dim> &back_stress);
+        void set_stress(const SymmetricTensor<2, dim> &stress);
+        void set_elastic_strain(const SymmetricTensor<2, dim> &elastic_strain);
+        void set_plastic_strain(const SymmetricTensor<2, dim> &plastic_strain);
+        void set_back_stress(const SymmetricTensor<2, dim> &back_stress);
         void set_principal_stresses(const std::vector<double> &principal_stresses);
         void set_accumulated_plastic_strain(double accumulated_plastic_strain);
         void set_is_plastic(bool is_plastic);
@@ -117,25 +117,25 @@ namespace PlasticityModel
 
     // Setter functions
     template <int dim>
-    void PointHistory<dim>::set_stress(const Tensor<2, dim> &stress)
+    void PointHistory<dim>::set_stress(const SymmetricTensor<2, dim> &stress)
     {
         this->stress = stress;
     }
 
     template <int dim>
-    void PointHistory<dim>::set_elastic_strain(const Tensor<2, dim> &elastic_strain)
+    void PointHistory<dim>::set_elastic_strain(const SymmetricTensor<2, dim> &elastic_strain)
     {
         this->elastic_strain = elastic_strain;
     }
 
     template <int dim>
-    void PointHistory<dim>::set_plastic_strain(const Tensor<2, dim> &plastic_strain)
+    void PointHistory<dim>::set_plastic_strain(const SymmetricTensor<2, dim> &plastic_strain)
     {
         this->plastic_strain = plastic_strain;
     }
 
     template <int dim>
-    void PointHistory<dim>::set_back_stress(const Tensor<2, dim> &back_stress)
+    void PointHistory<dim>::set_back_stress(const SymmetricTensor<2, dim> &back_stress)
     {
         this->back_stress = back_stress;
     }
@@ -227,11 +227,11 @@ namespace PlasticityModel
         // The following function performs the return-mapping algorithm and determines the derivative of stress with
         // respect to strain based off of whether a one-vector or a two-vector return was used
         bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim>& elastic_strain_trial,
-            Tensor<4, dim>& consistent_tangent_operator, std::shared_ptr<PointHistory<dim>> &qph,
+            SymmetricTensor<4, dim>& consistent_tangent_operator, std::shared_ptr<PointHistory<dim>> &qph,
             std::string yield_criteria, std::string hardening_law) const;
 
-        Tensor<4, dim> derivative_of_isotropic_tensor(std::array<double, 3> x, Tensor<2, dim> e, Tensor<2, dim>,
-            Tensor<2, dim> Y, Tensor<2, dim> dy_dx) const;
+        SymmetricTensor<4, dim> derivative_of_isotropic_tensor(Tensor<1, dim> x, Tensor<2, dim> e,
+            SymmetricTensor<2, dim>, SymmetricTensor<2, dim> Y, SymmetricTensor<2, dim> dy_dx) const;
 
     private:
         const double kappa;
@@ -278,34 +278,35 @@ namespace PlasticityModel
         sigma_0 = sigma_zero;
     }
 
-    // Function to find and sort eigenvalues and eigenvectors of a tensor in descending order
+    // Function to compute and sort eigenvalues and eigenvectors of a tensor in descending order
     template <int dim>
-    std::pair<std::array<double, dim>, Tensor<2, dim>> compute_principal_values_vectors(const SymmetricTensor<2, dim> &A)
+    std::pair<Tensor<1, dim>, Tensor<2, dim>> compute_principal_values_vectors(const SymmetricTensor<2, dim> &A)
     {
         // Find eigenvalues and eigenvectors
         auto eigenvector_pairs = eigenvectors(A);
 
+        // Sort eigenvalues and eigenvectors in descending order
         std::sort(eigenvector_pairs.begin(), eigenvector_pairs.end(),
-                 [](const std::pair<double, SymmetricTensor<2, dim>> &a, const std::pair<double,
-                     SymmetricTensor<2, dim>> &b) {
-                     return a.first > b.first;
-                 });
+                  [](const std::pair<double, Tensor<1, dim>> &a, const std::pair<double, Tensor<1, dim>> &b) {
+                      return a.first > b.first;
+                  });
 
+        // Extract sorted eigenvalues and eigenvectors
+        Tensor<1, dim> sorted_eigenvalues;
         Tensor<2, dim> sorted_eigenvectors_tensor;
-        for (unsigned int i = 0; i < dim; ++i) {
-            for (unsigned int j = 0; j < dim; ++j) {
+
+        for (unsigned int i = 0; i < dim; ++i)
+        {
+            sorted_eigenvalues[i] = eigenvector_pairs[i].first;
+            for (unsigned int j = 0; j < dim; ++j)
+            {
                 sorted_eigenvectors_tensor[j][i] = eigenvector_pairs[i].second[j];
             }
         }
 
-        std::array<double, dim> sorted_eigenvalues(eigenvector_pairs.size());
-
-        for (unsigned int i = 0; i < dim; ++i) {
-            sorted_eigenvalues[i] = eigenvector_pairs[i].first;
-        }
-
         return std::make_pair(sorted_eigenvalues, sorted_eigenvectors_tensor);
     }
+
 
     // Function to find the eigenvalues of a tensor and sort them in descending order
     template <int dim>
@@ -360,7 +361,7 @@ namespace PlasticityModel
         // const SymmetricTensor<2, dim>& elastic_strain_n,
         // const SymmetricTensor<2, dim>& delta_strain,
         const SymmetricTensor<2, dim>& elastic_strain_trial,
-        Tensor<4, dim>& consistent_tangent_operator,
+        SymmetricTensor<4, dim>& consistent_tangent_operator,
         std::shared_ptr<PointHistory<dim>> &qph,
         std::string yield_criteria,
         std::string hardening_law) const
@@ -406,17 +407,17 @@ namespace PlasticityModel
         double s1, s2, s3;
 
         // NOTE: Not sure if the following should be a symmetric tensor (this has been checked)
-        Tensor<2, dim> ds_de;
-        Tensor<2, dim> dsigma_de;
+        SymmetricTensor<2, dim> ds_de;
+        SymmetricTensor<2, dim> dsigma_de;
 
         if (phi <= 0)
         {
             // Elastic step therefore setting values at n+1 to trial values
-            Tensor<2, dim> elastic_strain_n1 = elastic_strain_trial;
+            SymmetricTensor<2, dim> elastic_strain_n1 = elastic_strain_trial;
             double accumulated_plastic_strain_n1 = accumulated_plastic_strain_trial;
             double e_v_n1 = e_v_trial;
             double p_n1 = p_trial;
-            Tensor<2, dim> deviatoric_stress_n1 = deviatoric_stress_trial;
+            SymmetricTensor<2, dim> deviatoric_stress_n1 = deviatoric_stress_trial;
 
             return false;
         }
@@ -612,20 +613,20 @@ namespace PlasticityModel
         double p_n1 = p_trial;
 
         // deviatoric stress in the principal directions
-        Tensor<2, dim> s_n1;
+        SymmetricTensor<2, dim> s_n1;
         s_n1[0][0] = s1;
         s_n1[1][1] = s2;
         s_n1[2][2] = s3;
 
         // NOTE: The following operation results in a general tensor not a symmetric tensor
-        Tensor<2, dim> stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
+        SymmetricTensor<2, dim> stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
         // TODO: The equation for the updated elastic strain needs to be completed
         //  the deviatoric principal stresses and directions are needed
         // TODO: Add the following to the quadrature point history
         //  when they are being outputted you want to output them in the reference configuration
         //  this would probably want to be done at the end of the function for all the variables
-        Tensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * s_n1 +
+        SymmetricTensor<2, dim> elastic_strain_n1 = (1 / (2 * shear_modulus)) * s_n1 +
             (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
         // Equation 8.46 from textbook
@@ -662,9 +663,9 @@ namespace PlasticityModel
 
     // NOTE: I am not sure if the following function should output the elastic consistent tangent operator
     template <int dim>
-    Tensor<4, dim> ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
-        std::array<double, 3> x, Tensor<2, dim> e,
-        Tensor<2, dim> X, Tensor<2, dim> Y, Tensor<2, dim> dy_dx) const
+    SymmetricTensor<4, dim> ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
+        Tensor<1, dim> x, Tensor<2, dim> e, SymmetricTensor<2, dim> X, SymmetricTensor<2, dim> Y,
+        SymmetricTensor<2, dim> dy_dx) const
     {
         // For this model the following should be passed as the arguments of this function
         //   Y - stress at n+1 as a tensor
@@ -681,7 +682,7 @@ namespace PlasticityModel
         y[2] = Y[2][2];
 
         // Calculate the 4th-order tensor d[X^2]/dX_ijkl as per equation A.46 in the textbook
-        Tensor<4, dim> dX2_dX;
+        SymmetricTensor<4, dim> dX2_dX;
 
         for (unsigned int i = 0; i < dim; ++i)
         {
@@ -710,14 +711,10 @@ namespace PlasticityModel
         }
 
         // Compute the projection tensors Ei = ei ⊗ ei for each eigenvector
-        Tensor<2, dim> E;
-        for (unsigned int i = 0; i < dim; ++i)
-        {
-            E[i] = outer_product(e[i], e[i]);
-        }
+        std::array<SymmetricTensor<2, dim>, 3> E;
 
         // Initialize the 4th-order tensor D to zero
-        Tensor<4, dim> D = 0;
+        SymmetricTensor<4, dim> D;
 
         // The following can be found in box A.6 of the textbook
         if (x[0] != x[1] && x[1] != x[2])
@@ -742,6 +739,11 @@ namespace PlasticityModel
                     b = 1;
                     c = 2;
                 }
+
+                // Compute the projection tensors Ei = ei ⊗ ei for each eigenvector
+                E[a] = symmetrize(outer_product(e[a], e[a]));
+                E[b] = symmetrize(outer_product(e[b], e[b]));
+                E[c] = symmetrize(outer_product(e[c], e[c]));
 
                 D += (y[a] / ((x[a] - x[b]) * (x[a] - x[c]))) * (dX2_dX - (x[b] - x[c]) * identity_tensor<dim>() -
                     ((x[a] - x[b]) + (x[a] - x[c])) * outer_product(E[a], E[a]) - (x[b] - x[c]) *
@@ -776,34 +778,34 @@ namespace PlasticityModel
 
             // TODO: These need to be checked if they are copied (from the textbook) correctly
             // The following are not deviatoric stress values
-            double s1 = (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2])) +
-                        (1 / (x[0] - x[2])) * ((dy_dx[2][0] - dy_dx[2][1]) - (dy_dx[2][0] - dy_dx[2][2]));
+            double s1 = (y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c])) +
+                        (1 / (x[a] - x[c])) * ((dy_dx[c][a] - dy_dx[c][b]) - (dy_dx[c][a] - dy_dx[c][c]));
 
-            double s2 = 2 * x[2] * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2])) +
-                       (x[0] + x[2]) / (x[0] - x[2]) * (dy_dx[2][0] - dy_dx[2][1]);
+            double s2 = 2 * x[c] * (y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c])) +
+                       (x[a] + x[c]) / (x[a] - x[c]) * (dy_dx[c][a] - dy_dx[c][b]);
 
-            double s3 = 2 * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2]) * (x[0] - x[2])) +
-                       (1 / ((x[0] - x[2]) * (x[0] - x[2]))) *
-                       ((dy_dx[2][0] + dy_dx[0][0]) + (dy_dx[0][0] - dy_dx[0][2]) - (dy_dx[2][0] - dy_dx[2][2]));
+            double s3 = 2 * (y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]) * (x[a] - x[c])) +
+                       (1 / ((x[a] - x[c]) * (x[a] - x[c]))) *
+                       ((dy_dx[c][a] + dy_dx[a][a]) + (dy_dx[a][a] - dy_dx[a][c]) - (dy_dx[c][a] - dy_dx[c][c]));
 
-            double s4 = 2 * x[2] * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2]) * (x[0] - x[2])) +
-                       (1 / ((x[0] - x[2]) * (x[0] - x[2]))) *
-                       (dy_dx[2][0] - dy_dx[2][1]) + (x[2] / ((x[0] - x[2]) * (x[0] - x[2]))) *
-                       ((dy_dx[2][0] + dy_dx[0][0]) + (dy_dx[0][0] - dy_dx[0][2]) - (dy_dx[2][0] - dy_dx[2][2]));
+            double s4 = 2 * x[c] * (y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]) * (x[a] - x[c])) +
+                       (1 / ((x[a] - x[c]) * (x[a] - x[c]))) *
+                       (dy_dx[c][a] - dy_dx[c][b]) + (x[c] / ((x[a] - x[c]) * (x[a] - x[c]))) *
+                       ((dy_dx[c][a] + dy_dx[a][a]) + (dy_dx[a][a] - dy_dx[a][c]) - (dy_dx[c][a] - dy_dx[c][c]));
 
-            double s5 = 2 * x[2] * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2]) * (x[0] - x[2])) +
-                       (1 / ((x[0] - x[2]) * (x[0] - x[2]))) *
-                       (dy_dx[2][0] - dy_dx[2][1]) + (x[2] / ((x[0] - x[2]) * (x[0] - x[2]))) *
-                       ((dy_dx[2][0] + dy_dx[0][0]) + (dy_dx[0][0] - dy_dx[0][2]) - (dy_dx[2][0] - dy_dx[2][2]));
+            double s5 = 2 * x[c] * (y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]) * (x[a] - x[c])) +
+                       (1 / ((x[a] - x[c]) * (x[a] - x[c]))) *
+                       (dy_dx[c][a] - dy_dx[c][b]) + (x[c] / ((x[a] - x[c]) * (x[a] - x[c]))) *
+                       ((dy_dx[c][a] + dy_dx[a][a]) + (dy_dx[a][a] - dy_dx[a][c]) - (dy_dx[c][a] - dy_dx[c][c]));
 
-            double s6 = 2 * (x[2] * x[2]) * (y[0] - y[2]) / ((x[0] - x[2]) * (x[0] - x[2]) * (x[0] - x[2])) +
-                       (x[0] * x[2]) / ((x[0] - x[2]) * (x[0] - x[2])) *
-                       ((dy_dx[0][0] + dy_dx[2][0]) + (dy_dx[0][0] - dy_dx[0][2]) - (dy_dx[2][0] - dy_dx[2][2])) -
-                       (x[2] * x[2]) / ((x[0] - x[2]) * (x[0] - x[2])) *
-                       ((dy_dx[0][0] + dy_dx[2][0])) - (x[0] + x[2]) / (x[0] - x[2]) * dy_dx[2][0];
+            double s6 = 2 * (x[c] * x[c]) * (y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]) * (x[a] - x[c])) +
+                       (x[a] * x[c]) / ((x[a] - x[c]) * (x[a] - x[c])) *
+                       ((dy_dx[a][a] + dy_dx[c][a]) + (dy_dx[a][a] - dy_dx[a][c]) - (dy_dx[c][a] - dy_dx[c][c])) -
+                       (x[c] * x[c]) / ((x[a] - x[c]) * (x[a] - x[c])) *
+                       ((dy_dx[a][a] + dy_dx[c][a])) - (x[a] + x[c]) / (x[a] - x[c]) * dy_dx[c][a];
 
             D = s1 * dX2_dX - s2 * identity_tensor<dim>() - s3 * outer_product(X, X) +
-                s4 * outer_product(x, unit_symmetric_tensor<dim>()) +
+                s4 * outer_product(X, unit_symmetric_tensor<dim>()) +
                     s5 * outer_product(unit_symmetric_tensor<dim>(), X) -
                     s6 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
         }
@@ -1364,7 +1366,7 @@ namespace PlasticityModel
                 {
                     std::shared_ptr<PointHistory<dim>> &qph = quadrature_point_history[cell_index + q_point];
 
-                    Tensor<4, dim> consistent_tangent_operator;
+                    SymmetricTensor<4, dim> consistent_tangent_operator;
                     SymmetricTensor<2, dim> stress_tensor;
 
                     // Compute the consistent tangent operator using the return mapping
