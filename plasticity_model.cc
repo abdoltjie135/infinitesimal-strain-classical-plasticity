@@ -75,12 +75,6 @@ namespace PlasticityModel
     public:
         PointHistory() = default;
 
-        SymmetricTensor<2, dim> stored_stress;
-        SymmetricTensor<2, dim> stored_elastic_strain;
-        SymmetricTensor<2, dim> stored_plastic_strain;
-        SymmetricTensor<2, dim> stored_back_stress;
-        std::vector<double> stored_principal_stresses;
-
         void store_internal_variables();
 
         // A setter allows controlled modification of a private or protected member variable, typically
@@ -89,6 +83,7 @@ namespace PlasticityModel
         void set_elastic_strain(const SymmetricTensor<2, dim> &elastic_strain);
         void set_plastic_strain(const SymmetricTensor<2, dim> &plastic_strain);
         void set_back_stress(const SymmetricTensor<2, dim> &back_stress);
+        void set_consistent_tangent_operator(const SymmetricTensor<4, dim> &consistent_tangent_operator);
         void set_principal_stresses(const std::vector<double> &principal_stresses);
         void set_accumulated_plastic_strain(double accumulated_plastic_strain);
         void set_is_plastic(bool is_plastic);
@@ -99,6 +94,7 @@ namespace PlasticityModel
         SymmetricTensor<2, dim> get_elastic_strain() const;
         SymmetricTensor<2, dim> get_plastic_strain() const;
         SymmetricTensor<2, dim> get_back_stress() const;
+        SymmetricTensor<4, dim> get_consistent_tangent_operator() const;
         std::vector<double> get_principal_stresses() const;
         // NOTE: I am not sure if the following two functions are needed
         double get_accumulated_plastic_strain() const;
@@ -113,6 +109,13 @@ namespace PlasticityModel
         std::vector<double> principal_stresses;
         double accumulated_plastic_strain;
         bool is_plastic;
+
+        SymmetricTensor<2, dim> stored_stress;
+        SymmetricTensor<2, dim> stored_elastic_strain;
+        SymmetricTensor<2, dim> stored_plastic_strain;
+        SymmetricTensor<2, dim> stored_back_stress;
+        SymmetricTensor<4, dim> consistent_tangent_operator;
+        std::vector<double> stored_principal_stresses;
     };
 
     // Setter functions
@@ -144,6 +147,12 @@ namespace PlasticityModel
     void PointHistory<dim>::set_principal_stresses(const std::vector<double> &principal_stresses)
     {
         this->principal_stresses = principal_stresses;
+    }
+
+    template <int dim>
+    void PointHistory<dim>::set_consistent_tangent_operator(const SymmetricTensor<4, dim> &consistent_tangent_operator)
+    {
+        this->consistent_tangent_operator = consistent_tangent_operator;
     }
 
     template <int dim>
@@ -189,6 +198,12 @@ namespace PlasticityModel
         return principal_stresses;
     }
 
+    template <int dim>
+    SymmetricTensor<4, dim> PointHistory<dim>::get_consistent_tangent_operator() const
+    {
+        return consistent_tangent_operator;
+    }
+
     template<int dim>
     double PointHistory<dim>::get_accumulated_plastic_strain() const
     {
@@ -225,7 +240,7 @@ namespace PlasticityModel
         // The following function performs the return-mapping algorithm and determines the derivative of stress with
         // respect to strain based off of whether a one-vector or a two-vector return was used
         bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim>& elastic_strain_trial,
-            SymmetricTensor<4, dim>& consistent_tangent_operator, std::shared_ptr<PointHistory<dim>> &qph,
+            std::shared_ptr<PointHistory<dim>> &qph,
             std::string yield_criteria, std::string hardening_law) const;
 
         SymmetricTensor<4, dim> derivative_of_isotropic_tensor(Tensor<1, dim> x, Tensor<2, dim> e,
@@ -341,10 +356,10 @@ namespace PlasticityModel
     bool ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
         // const SymmetricTensor<2, dim>& elastic_strain_n,
         // const SymmetricTensor<2, dim>& delta_strain,
-        const SymmetricTensor<2, dim>& elastic_strain_trial,
-        SymmetricTensor<4, dim>& consistent_tangent_operator,
+        const SymmetricTensor<2, dim> &elastic_strain_trial,
+        // SymmetricTensor<4, dim> &consistent_tangent_operator,
         std::shared_ptr<PointHistory<dim>> &qph,
-        // NOTE: The following arguments are for when the kinematic hardening and Vob Mises gets incorporated
+        // NOTE: The following arguments are for when the kinematic hardening and Von Mises gets incorporated
         std::string yield_criteria,
         std::string hardening_law) const
     {
@@ -638,8 +653,10 @@ namespace PlasticityModel
         qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
         // qph->set_is_plastic();
 
-        consistent_tangent_operator = derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
+        SymmetricTensor<4, dim> consistent_tangent_operator = derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
             elastic_strain_trial_eigenvectors_matrix, elastic_strain_trial, stress_n1, dsigma_de);
+
+        qph->set_consistent_tangent_operator(consistent_tangent_operator);
 
         return true;
     }
@@ -884,7 +901,7 @@ namespace PlasticityModel
         void make_grid();
         void setup_system();
         void compute_dirichlet_constraints();
-        void assemble_newton_system(const TrilinosWrappers::MPI::Vector& linearization_point);
+        void assemble_newton_system(const TrilinosWrappers::MPI::Vector& linearization_point, const bool rhs_only = false);
         void compute_nonlinear_residual(const TrilinosWrappers::MPI::Vector& linearization_point);
         void solve_newton_system();
         void solve_newton();
@@ -1255,7 +1272,8 @@ namespace PlasticityModel
 
 
     template <int dim>
-    void PlasticityProblem<dim>::assemble_newton_system(const TrilinosWrappers::MPI::Vector &linearization_point)
+    void PlasticityProblem<dim>::assemble_newton_system(const TrilinosWrappers::MPI::Vector &linearization_point,
+        const bool rhs_only)
     {
         TimerOutput::Scope t(computing_timer, "Assembling");
 
@@ -1268,8 +1286,8 @@ namespace PlasticityModel
         const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
         const unsigned int n_q_points = quadrature_formula.size();
 
-        FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
-        Vector<double> cell_rhs(dofs_per_cell);
+        FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);  // element contribution to the stiffness matrix
+        Vector<double> cell_rhs(dofs_per_cell);  // the element contribution to the residual
 
         std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
         std::vector<SymmetricTensor<2, dim>> strain_tensor(n_q_points);
@@ -1286,6 +1304,7 @@ namespace PlasticityModel
 
                 // Get strains at each quadrature point
                 fe_values[displacement].get_function_symmetric_gradients(linearization_point, strain_tensor);
+                // linearization_point is the solution vector from the previous iteration
 
                 // Retrieve the quadrature point history for this cell
                 unsigned int cell_index = cell->active_cell_index() * n_q_points;
@@ -1294,24 +1313,37 @@ namespace PlasticityModel
                 {
                     std::shared_ptr<PointHistory<dim>> &qph = quadrature_point_history[cell_index + q_point];
 
-                    SymmetricTensor<4, dim> consistent_tangent_operator;
-                    SymmetricTensor<2, dim> stress_tensor;
+                    // retrieving D for step iii of Box 4.2 in the textbook
+                    SymmetricTensor<4, dim> consistent_tangent_operator = qph->get_consistent_tangent_operator();
 
                     // Compute the consistent tangent operator using the return mapping
+                    // The following is step vii (for the current step) and step ii (for the next step) in Box 4.2 in
+                    //  the textbook
                     constitutive_law.return_mapping_and_derivative_stress_strain(
-                    strain_tensor[q_point], consistent_tangent_operator, qph, yield_criteria, hardening_law);
+                    strain_tensor[q_point], qph, yield_criteria, hardening_law);
+
+                    SymmetricTensor<2, dim> stress_tensor = qph->get_stress();
 
                     // Assemble element tangent stiffness matrix K_T = ∑ w_i * j_i * (B_i^T * D_i * B_i)
                     for (unsigned int i = 0; i < dofs_per_cell; ++i)
                     {
-                        for (unsigned int j = 0; j < dofs_per_cell; ++j)
+                        if (!rhs_only)
                         {
-                            // FIXME: The following is not correct but this is for testing purposes
-                            cell_matrix(i, j) += fe_values[displacement].symmetric_gradient(i, q_point) *
-                                consistent_tangent_operator *
-                                    fe_values[displacement].symmetric_gradient(j, q_point) *
-                                        fe_values.JxW(q_point);
+                            for (unsigned int j = 0; j < dofs_per_cell; ++j)
+                            {
+                                // the following is step iii in Box 4.2 in the textbook
+                                // FIXME: The following is not correct but this is for testing purposes
+                                cell_matrix(i, j) += fe_values[displacement].symmetric_gradient(i, q_point) *
+                                    consistent_tangent_operator *
+                                        fe_values[displacement].symmetric_gradient(j, q_point) *
+                                            fe_values.JxW(q_point);
+                            }
                         }
+                        // NOTE: This does not include the external force effects
+                        //  the following is the negative of the internal force as seen in step iv in Box 4.2 in the textbook
+                        // TODO: Add the external force effects to create the full residual
+                        cell_rhs(i) -= fe_values[displacement].symmetric_gradient(i, q_point) *
+                            stress_tensor * fe_values.JxW(q_point);
                     }
                 }
 
@@ -1325,7 +1357,7 @@ namespace PlasticityModel
         }
     }
 
-
+    //  FIXME: The following function might not be needed
     // The following function calculates the residual vector for the nonlinear system of equations in the context
     // of a plasticity model. The residual represents the difference between the internal forces (arising from the
     // material's stress response) and the external forces (such as boundary conditions). The residual is crucial in
@@ -1443,6 +1475,7 @@ namespace PlasticityModel
         all_constraints.distribute(newton_increment);
 
         // Update solution: u^(k+1) = u^(k) + δu^(k)
+        // NOTE: Might want to move the increment in to the solve_newton function in order to implement line search algorithm
         solution += newton_increment;
     }
 
@@ -1467,10 +1500,10 @@ namespace PlasticityModel
 
         for (unsigned int newton_step = 1; newton_step <= 100; ++newton_step)
         {
-            if (newton_step <= 2 &&
-                ((transfer_solution && current_refinement_cycle == 0) ||
-                 !transfer_solution))
-                constitutive_law.set_sigma_0(correct_sigma);
+            // if (newton_step <= 2 &&
+            //     ((transfer_solution && current_refinement_cycle == 0) ||
+            //      !transfer_solution))
+            //     constitutive_law.set_sigma_0(correct_sigma);
 
             pcout << ' ' << std::endl;
             pcout << "   Newton iteration " << newton_step << std::endl;
@@ -1478,13 +1511,14 @@ namespace PlasticityModel
             pcout << "      Assembling system... " << std::endl;
             newton_matrix = 0;
             newton_rhs = 0;
-            assemble_newton_system(solution);
+            assemble_newton_system(solution);  // guess of the displacement from step k (step ii, iii and first half iv in Box 4.2 of the textbook)
+                                               // 'solution' is the current guess of the solution
 
             pcout << "      Solving system... " << std::endl;
-            solve_newton_system();
+            solve_newton_system();  // solve the linear system to find the Newton increment second half of step iv in Box 4.2 of the textbook
 
-            compute_nonlinear_residual(solution);
-            old_solution = solution;
+            // compute_nonlinear_residual(solution);
+            // old_solution = solution;
 
             residual = newton_rhs;
             const unsigned int start_res = (residual.local_range().first),
