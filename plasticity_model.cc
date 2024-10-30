@@ -678,7 +678,7 @@ namespace PlasticityModel
 
         // The eigenvalues of the stress at n+1 are not being computed before. The stress at n+1 is being passed as a
         // tensor in its principal directions therefore the principal stresses are on the diagonal of the tensor.
-        Vector<double> y;
+        Vector<double> y(dim);
         y[0] = Y[0][0];
         y[1] = Y[1][1];
         y[2] = Y[2][2];
@@ -726,20 +726,20 @@ namespace PlasticityModel
                 unsigned int b;
                 unsigned int c;
 
-                if (a == 1)
-                {
-                    b = 2;
-                    c = 3;
-                }
-                if (a == 2)
-                {
-                    b = 3;
-                    c = 1;
-                }
-                if (a == 3)
+                if (a == 0)
                 {
                     b = 1;
                     c = 2;
+                }
+                if (a == 1)
+                {
+                    b = 2;
+                    c = 0;
+                }
+                if (a == 2)
+                {
+                    b = 0;
+                    c = 1;
                 }
 
                 // Compute the projection tensors Ei = ei ⊗ ei for each eigenvector
@@ -1497,7 +1497,7 @@ namespace PlasticityModel
         TrilinosWrappers::MPI::Vector external_force(locally_owned_dofs, mpi_communicator);
         // Assume external_force is computed or provided elsewhere in the code
 
-        for (unsigned int newton_step; newton_step <= 100; ++newton_step)
+        for (unsigned int newton_step = 0; newton_step <= 100; ++newton_step)
         {
             pcout << ' ' << std::endl;
             pcout << "   Newton iteration " << newton_step << std::endl;
@@ -1549,6 +1549,8 @@ namespace PlasticityModel
             if (relative_residual < tolerance)
             {
                 pcout << "      Convergence achieved with relative residual norm: " << relative_residual << std::endl;
+
+                //TODO: Values need to be set
                 break;
             }
         }
