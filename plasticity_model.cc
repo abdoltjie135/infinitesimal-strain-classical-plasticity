@@ -1479,7 +1479,6 @@ namespace PlasticityModel
         solution += newton_increment;
     }
 
-
     template <int dim>
     void PlasticityProblem<dim>::solve_newton()
     {
@@ -1543,18 +1542,105 @@ namespace PlasticityModel
             double external_force_norm = external_force.l2_norm();
             double relative_residual = residual_norm / external_force_norm;
 
-            pcout << "      Relative residual norm: " << relative_residual << std::endl;
+            // pcout << "      Relative residual norm: " << relative_residual << std::endl;
+            pcout << "      Residual norm: " << residual_norm << std::endl;
 
-            // Step x: Check for convergence using relative residual
-            if (relative_residual < tolerance)
+            // Step x: Check for convergence using the ratio of previous residual norm to current residual norm
+            if (newton_step > 0)
             {
-                pcout << "      Convergence achieved with relative residual norm: " << relative_residual << std::endl;
+                double residual_ratio = previous_residual_norm / residual_norm;
+                pcout << "      Residual ratio: " << residual_ratio << std::endl;
 
-                //TODO: Values need to be set
-                break;
+                if (std::abs(residual_ratio - 1.0) < tolerance)
+                {
+                    pcout << "      Convergence achieved with residual ratio: " << residual_ratio << std::endl;
+                    break;
+                }
             }
+
+            previous_residual_norm = residual_norm;
         }
     }
+
+    // template <int dim>
+    // void PlasticityProblem<dim>::solve_newton()
+    // {
+    //     TrilinosWrappers::MPI::Vector old_solution(locally_owned_dofs, mpi_communicator);
+    //     TrilinosWrappers::MPI::Vector residual(locally_owned_dofs, mpi_communicator);
+    //     TrilinosWrappers::MPI::Vector tmp_vector(locally_owned_dofs, mpi_communicator);
+    //     TrilinosWrappers::MPI::Vector locally_relevant_tmp_vector(locally_relevant_dofs, mpi_communicator);
+    //     TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs, mpi_communicator);
+    //
+    //     double residual_norm;
+    //     double previous_residual_norm = -std::numeric_limits<double>::max();
+    //
+    //     const double tolerance = 1e-10; // Convergence tolerance for the residual norm
+    //
+    //     TrilinosWrappers::MPI::Vector external_force(locally_owned_dofs, mpi_communicator);
+    //     // Assume external_force is computed or provided elsewhere in the code
+    //
+    //     for (unsigned int newton_step = 0; newton_step <= 100; ++newton_step)
+    //     {
+    //         pcout << ' ' << std::endl;
+    //         pcout << "   Newton iteration " << newton_step << std::endl;
+    //
+    //         pcout << "      Assembling system... " << std::endl;
+    //         newton_matrix = 0;
+    //         newton_rhs = 0;
+    //
+    //         if (newton_step == 0)
+    //         {
+    //             // Set the consistent_tangent_operator to the desired value for the first Newton step
+    //             for (auto &qph : quadrature_point_history)
+    //             {
+    //                 const double shear_modulus = 200000.0;
+    //                 const double bulk_modulus = 400000.0;
+    //
+    //                 SymmetricTensor<4, dim> consistent_tangent_operator_first_step = 2 * shear_modulus *
+    //                     (identity_tensor<dim>() - 1 / 3 *
+    //                         outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
+    //                             bulk_modulus * outer_product(unit_symmetric_tensor<dim>(),
+    //                                 unit_symmetric_tensor<dim>());
+    //
+    //                 qph->set_consistent_tangent_operator(consistent_tangent_operator_first_step);
+    //             }
+    //         }
+    //
+    //         assemble_newton_system(solution);  // guess of the displacement from step k (step ii, iii and first half iv in Box 4.2 of the textbook)
+    //                                            // 'solution' is the current guess of the solution
+    //
+    //         pcout << "      Solving system... " << std::endl;
+    //         solve_newton_system();  // solve the linear system to find the Newton increment second half of step iv in Box 4.2 of the textbook
+    //
+    //         residual = newton_rhs;
+    //         const unsigned int start_res = (residual.local_range().first),
+    //                            end_res = (residual.local_range().second);
+    //         for (unsigned int n = start_res; n < end_res; ++n)
+    //             if (all_constraints.is_inhomogeneously_constrained(n))
+    //                 residual(n) = 0;
+    //
+    //         residual.compress(VectorOperation::insert);
+    //
+    //         residual_norm = residual.l2_norm();
+    //         double external_force_norm = external_force.l2_norm();
+    //         double relative_residual = residual_norm / external_force_norm;
+    //
+    //         // pcout << "      Relative residual norm: " << relative_residual << std::endl;
+    //         pcout << "      Residual norm: " << residual_norm << std::endl;
+    //
+    //         // Step x: Check for convergence using relative residual
+    //         // if (relative_residual < tolerance)
+    //         if (residual_norm < tolerance)
+    //         {
+    //             pcout << "      Convergence achieved with relative residual norm: " << relative_residual << std::endl;
+    //
+    //             // TODO: Values need to be set
+    //
+    //
+    //             break;
+    //         }
+    //     }
+    // }
 
 
     // The following function is essential for adaptive meshing
