@@ -1226,6 +1226,9 @@ namespace PlasticityModel
             constraints_dirichlet_and_hanging_nodes,
             fe.component_mask(z_displacement));
 
+        // Debugging output
+        pcout << "Applied displacement at top face: " << applied_displacement << std::endl;
+
         VectorTools::interpolate_boundary_values(
             dof_handler,
             // bottom face
