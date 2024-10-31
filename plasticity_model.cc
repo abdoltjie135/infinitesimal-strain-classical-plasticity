@@ -23,6 +23,7 @@
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/block_sparsity_pattern.h>
 #include <deal.II/lac/solver_bicgstab.h>
+#include <deal.II/lac/solver_gmres.h>
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/trilinos_sparse_matrix.h>
@@ -356,10 +357,7 @@ namespace PlasticityModel
     // The following function checks if it is plastic or elastic
     template <int dim>
     bool ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
-        // const SymmetricTensor<2, dim>& elastic_strain_n,
-        // const SymmetricTensor<2, dim>& delta_strain,
         const SymmetricTensor<2, dim> &elastic_strain_trial,
-        // SymmetricTensor<4, dim> &consistent_tangent_operator,
         std::shared_ptr<PointHistory<dim>> &qph,
         // NOTE: The following arguments are for when the kinematic hardening and Von Mises gets incorporated
         std::string yield_criteria,
@@ -1457,8 +1455,13 @@ namespace PlasticityModel
             const double solver_tolerance = relative_accuracy *
                                             newton_matrix.residual(tmp, newton_increment, newton_rhs);
 
-            SolverControl solver_control(newton_matrix.m(), solver_tolerance);
-            SolverBicgstab<TrilinosWrappers::MPI::Vector> solver(solver_control);
+            SolverControl solver_control(2 * newton_matrix.m(), solver_tolerance);
+
+            // Commented out the original BiCGStab solver
+            // SolverBicgstab<TrilinosWrappers::MPI::Vector> solver(solver_control);
+
+            // Replacing BiCGStab solver with GMRES solver
+            SolverGMRES<TrilinosWrappers::MPI::Vector> solver(solver_control);
 
             // Solve the system: newton_matrix * newton_increment = newton_rhs
             solver.solve(newton_matrix,
@@ -1468,7 +1471,7 @@ namespace PlasticityModel
 
             pcout << "         Error: " << solver_control.initial_value() << " -> "
                   << solver_control.last_value() << " in "
-                  << solver_control.last_step() << " Bicgstab iterations."
+                  << solver_control.last_step() << " GMRES iterations."
                   << std::endl;
         }
 
@@ -1478,6 +1481,7 @@ namespace PlasticityModel
         // NOTE: Might want to move the increment in to the solve_newton function in order to implement line search algorithm
         solution += newton_increment;
     }
+
 
     template <int dim>
     void PlasticityProblem<dim>::solve_newton()
@@ -1489,7 +1493,7 @@ namespace PlasticityModel
         TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs, mpi_communicator);
 
         double residual_norm;
-        double previous_residual_norm = -std::numeric_limits<double>::max();
+        double previous_residual_norm;
 
         const double tolerance = 1e-10; // Convergence tolerance for the residual norm
 
@@ -1539,21 +1543,24 @@ namespace PlasticityModel
             residual.compress(VectorOperation::insert);
 
             residual_norm = residual.l2_norm();
-            double external_force_norm = external_force.l2_norm();
-            double relative_residual = residual_norm / external_force_norm;
-
-            // pcout << "      Relative residual norm: " << relative_residual << std::endl;
-            pcout << "      Residual norm: " << residual_norm << std::endl;
+            // TODO: The following will be needed for external forces
+            // double external_force_norm = external_force.l2_norm();
 
             // Step x: Check for convergence using the ratio of previous residual norm to current residual norm
             if (newton_step > 0)
             {
+                pcout << "      Previous residual norm: " << previous_residual_norm << std::endl;
+                pcout << "      Residual norm: " << residual_norm << std::endl;
+
                 double residual_ratio = previous_residual_norm / residual_norm;
                 pcout << "      Residual ratio: " << residual_ratio << std::endl;
 
                 if (std::abs(residual_ratio - 1.0) < tolerance)
                 {
                     pcout << "      Convergence achieved with residual ratio: " << residual_ratio << std::endl;
+
+                    // NOTE: I am not sure if I have to set the values here
+
                     break;
                 }
             }
@@ -1689,7 +1696,7 @@ namespace PlasticityModel
             constraints_hanging_nodes.distribute(distributed_solution);
 
             solution = distributed_solution;
-            compute_nonlinear_residual(solution);
+            // compute_nonlinear_residual(solution);
         }
     }
 
@@ -1744,6 +1751,10 @@ namespace PlasticityModel
         data_out.add_data_vector(solution, std::vector<std::string>(dim, "displacement"),
                                  DataOut<dim>::type_dof_data, data_component_interpretation);
         data_out.add_data_vector(fraction_of_plastic_q_points_per_cell, "fraction_of_plastic_q_points");
+
+        stress_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
+
+        pcout << "I run all the way to here!" << stress_tensor_tmp.size() << std::endl;
 
         for (int i = 0; i < dim; ++i)
             for (int j = i; j < dim; ++j)
