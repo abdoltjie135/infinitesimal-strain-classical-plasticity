@@ -903,7 +903,7 @@ namespace PlasticityModel
         void compute_dirichlet_constraints();
         void assemble_newton_system(const TrilinosWrappers::MPI::Vector& linearization_point, const bool rhs_only = false);
         void compute_nonlinear_residual(const TrilinosWrappers::MPI::Vector& linearization_point);
-        void solve_newton_system();
+        void solve_newton_system(TrilinosWrappers::MPI::Vector &newton_increment);
         void solve_newton();
         void refine_grid();
         void move_mesh(const TrilinosWrappers::MPI::Vector& displacement) const;
@@ -1419,11 +1419,11 @@ namespace PlasticityModel
 
 
     template <int dim>
-    void PlasticityProblem<dim>::solve_newton_system()
+    void PlasticityProblem<dim>::solve_newton_system(TrilinosWrappers::MPI::Vector &newton_increment)
     {
         TimerOutput::Scope t(computing_timer, "Solve");
 
-        TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
+
 
         // The following is a preconditioner setup. This accelerates the convergence of the iterative solver.
         TrilinosWrappers::PreconditionAMG preconditioner; // AMG preconditioner
@@ -1477,12 +1477,6 @@ namespace PlasticityModel
                   << solver_control.last_step() << " GMRES iterations."
                   << std::endl;
         }
-
-        all_constraints.distribute(newton_increment);
-
-        // Update solution: u^(k+1) = u^(k) + δu^(k)
-        // NOTE: Might want to move the increment in to the solve_newton function in order to implement line search algorithm
-        solution += newton_increment;
     }
 
 
@@ -1512,6 +1506,7 @@ namespace PlasticityModel
             newton_matrix = 0;
             newton_rhs = 0;
 
+            // NOTE: Move this to the run function to solve the linear step
             if (newton_step == 0)
             {
                 // Set the consistent_tangent_operator to the desired value for the first Newton step
@@ -1530,11 +1525,33 @@ namespace PlasticityModel
                 }
             }
 
+
             assemble_newton_system(solution);  // guess of the displacement from step k (step ii, iii and first half iv in Box 4.2 of the textbook)
                                                // 'solution' is the current guess of the solution
 
+            TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
+
+
+            if (newton_step != 0)
+            {
+                for (unsigned int n = 0; n < dof_handler.n_dofs(); ++n)
+                {
+                    if (all_constraints.is_inhomogeneously_constrained(n))
+                    {
+                        all_constraints.set_inhomogeneity(n, 0);
+                    }
+                }
+            }
+
             pcout << "      Solving system... " << std::endl;
-            solve_newton_system();  // solve the linear system to find the Newton increment second half of step iv in Box 4.2 of the textbook
+            solve_newton_system(newton_increment);  // solve the linear system to find the Newton increment
+                                                       // second half of step iv in Box 4.2 of the textbook
+
+            all_constraints.distribute(newton_increment);
+
+            // Update solution: u^(k+1) = u^(k) + δu^(k)
+            // NOTE: Might want to implement line search algorithm
+            solution += newton_increment;
 
             residual = newton_rhs;
             const unsigned int start_res = (residual.local_range().first),
@@ -1549,8 +1566,14 @@ namespace PlasticityModel
             // TODO: The following will be needed for external forces
             // double external_force_norm = external_force.l2_norm();
 
+
+
             // Step x: Check for convergence using the ratio of previous residual norm to current residual norm
-            if (newton_step > 0)
+            if (newton_step == 0)
+            {
+                pcout << "      Residual norm: " << residual_norm << std::endl;
+            }
+            else
             {
                 pcout << "      Previous residual norm: " << previous_residual_norm << std::endl;
                 pcout << "      Residual norm: " << residual_norm << std::endl;
@@ -1797,8 +1820,13 @@ namespace PlasticityModel
     void PlasticityProblem<dim>::run()
     {
         computing_timer.reset();
-        for (; current_refinement_cycle < n_refinement_cycles; ++current_refinement_cycle)
+        unsigned int n_t_steps = 1;
+        for (unsigned int t_step = 0; t_step < n_t_steps; ++t_step)
         {
+            // TODO: If timestep is 0 then take a linear step
+            //  solve the linear step
+            //  for all the others use the newton step
+            for (; current_refinement_cycle < n_refinement_cycles; ++current_refinement_cycle)
             {
                 TimerOutput::Scope t(computing_timer, "Setup");
 
@@ -1812,7 +1840,7 @@ namespace PlasticityModel
                     setup_system();
                 }
                 else
-                // refine the grid if the current refinement cycle is not the first one
+                    // refine the grid if the current refinement cycle is not the first one
                 {
                     TimerOutput::Scope t(computing_timer, "Setup: refine mesh");
                     refine_grid();
@@ -1822,6 +1850,7 @@ namespace PlasticityModel
             solve_newton();
 
             output_results(current_refinement_cycle);
+        }
 
             computing_timer.print_summary();
             computing_timer.reset();
@@ -1830,7 +1859,6 @@ namespace PlasticityModel
             Utilities::System::get_memory_stats(stats);
             pcout << "Peak virtual memory used, resident in kB: " << stats.VmSize
                 << ' ' << stats.VmRSS << std::endl;
-        }
     }
 }
 
