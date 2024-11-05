@@ -74,7 +74,7 @@ namespace PlasticityModel
     class PointHistory
     {
     public:
-        PointHistory() = default;
+        PointHistory();
 
         void store_internal_variables();
 
@@ -119,6 +119,22 @@ namespace PlasticityModel
         SymmetricTensor<4, dim> stored_consistent_tangent_operator;
         std::vector<double> stored_principal_stresses;
     };
+
+    // Constructor definition
+    template <int dim>
+    PointHistory<dim>::PointHistory()
+        : consistent_tangent_operator(SymmetricTensor<4, dim>()) // Initialize with default value
+    {
+        const double shear_modulus = 200000.0;
+        const double bulk_modulus = 400000.0;
+
+        // setting the initial value of the consistent tangent operator to the elastic consistent tangent operator
+        consistent_tangent_operator = 2 * shear_modulus *
+            (identity_tensor<dim>() - 1 / 3 *
+                outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
+                    bulk_modulus * outer_product(unit_symmetric_tensor<dim>(),
+                        unit_symmetric_tensor<dim>());
+    }
 
     // Setter functions
     template <int dim>
@@ -329,12 +345,12 @@ namespace PlasticityModel
     {
         Tensor<2, dim> principal_values_tensor = reconstruct_tensor(principal_values, eigenvectors_tensor);
         // TODO: Add a check to ensure that it is not a symmetric tensor already
-        return SymmetricTensor<2, dim> (principal_values_tensor);
+        return symmetrize(principal_values_tensor);
     }
 
     template <int dim>
-    Tensor<2, dim> reconstruct_tensor(const std::array<double, dim> &principal_values,
-                                              const Tensor<2, dim> &eigenvectors_tensor)
+    Tensor<2, dim> reconstruct_tensor( std::array<double, dim> &principal_values,
+                                               Tensor<2, dim> &eigenvectors_tensor)
     {
         Tensor<2, dim> principal_values_tensor;
         for (unsigned int i = 0; i < dim; ++i)
@@ -645,6 +661,10 @@ namespace PlasticityModel
         // Adding state variables to the quadrature point history
         // TODO: Do this for the rest of the variables
         //  some of the variables are not being set yet
+
+        // std::array<double, dim> stress_n1_array = {stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]};
+        // NOTE: Manually reconstructing the stress tensor
+        stress_n1 = symmetrize(elastic_strain_trial_eigenvectors_matrix * stress_n1 * transpose(elastic_strain_trial_eigenvectors_matrix));
         qph->set_stress(stress_n1);
         qph->set_elastic_strain(elastic_strain_n1);
         qph->set_plastic_strain(plastic_strain_n1);
@@ -661,6 +681,7 @@ namespace PlasticityModel
         return true;
     }
 
+    // TODO: Check if the following function is correct
     // NOTE: I am not sure if the following function should output the elastic consistent tangent operator
     template <int dim>
     SymmetricTensor<4, dim> ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
@@ -1240,7 +1261,7 @@ namespace PlasticityModel
         VectorTools::interpolate_boundary_values(
             dof_handler,
             // right face
-            1,
+            2,
             Functions::ZeroFunction<dim>(dim),
             constraints_dirichlet_and_hanging_nodes,
             fe.component_mask(y_displacement));
@@ -1251,26 +1272,27 @@ namespace PlasticityModel
             0,
             Functions::ZeroFunction<dim>(dim),
             constraints_dirichlet_and_hanging_nodes,
-            fe.component_mask(y_displacement));
+            fe.component_mask(x_displacement));
 
-        if (dim == 3)  // the front and back faces only exist in 3D
-        {
-            VectorTools::interpolate_boundary_values(
-                dof_handler,
-                // front face
-                3,
-                Functions::ZeroFunction<dim>(dim),
-                constraints_dirichlet_and_hanging_nodes,
-                fe.component_mask(x_displacement));
-
-            VectorTools::interpolate_boundary_values(
-                dof_handler,
-                // back face
-                2,
-                Functions::ZeroFunction<dim>(dim),
-                constraints_dirichlet_and_hanging_nodes,
-                fe.component_mask(x_displacement));
-        }
+        // NOTE: Code will only work in 3D because of the current working BCs
+        // if (dim == 3)  // the front and back faces only exist in 3D
+        // {
+        //     VectorTools::interpolate_boundary_values(
+        //         dof_handler,
+        //         // front face
+        //         3,
+        //         Functions::ZeroFunction<dim>(dim),
+        //         constraints_dirichlet_and_hanging_nodes,
+        //         fe.component_mask(x_displacement));
+        //
+        //     VectorTools::interpolate_boundary_values(
+        //         dof_handler,
+        //         // back face
+        //         2,
+        //         Functions::ZeroFunction<dim>(dim),
+        //         constraints_dirichlet_and_hanging_nodes,
+        //         fe.component_mask(x_displacement));
+        // }
     }
 
 
@@ -1349,6 +1371,8 @@ namespace PlasticityModel
                             stress_tensor * fe_values.JxW(q_point);
                     }
                 }
+                newton_matrix = 0;
+
                 cell->get_dof_indices(local_dof_indices);
                 all_constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices,
                     newton_matrix, newton_rhs);
@@ -1492,7 +1516,7 @@ namespace PlasticityModel
         double residual_norm;
         double previous_residual_norm;
 
-        const double tolerance = 1e-10; // Convergence tolerance for the residual norm
+        const double tolerance = 1e-8; // Convergence tolerance for the residual norm
 
         TrilinosWrappers::MPI::Vector external_force(locally_owned_dofs, mpi_communicator);
         // Assume external_force is computed or provided elsewhere in the code
@@ -1506,32 +1530,6 @@ namespace PlasticityModel
             newton_matrix = 0;
             newton_rhs = 0;
 
-            // NOTE: Move this to the run function to solve the linear step
-            if (newton_step == 0)
-            {
-                // Set the consistent_tangent_operator to the desired value for the first Newton step
-                for (auto &qph : quadrature_point_history)
-                {
-                    const double shear_modulus = 200000.0;
-                    const double bulk_modulus = 400000.0;
-
-                    SymmetricTensor<4, dim> consistent_tangent_operator_first_step = 2 * shear_modulus *
-                        (identity_tensor<dim>() - 1 / 3 *
-                            outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
-                                bulk_modulus * outer_product(unit_symmetric_tensor<dim>(),
-                                    unit_symmetric_tensor<dim>());
-
-                    qph->set_consistent_tangent_operator(consistent_tangent_operator_first_step);
-                }
-            }
-
-
-            assemble_newton_system(solution);  // guess of the displacement from step k (step ii, iii and first half iv in Box 4.2 of the textbook)
-                                               // 'solution' is the current guess of the solution
-
-            TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
-
-
             if (newton_step != 0)
             {
                 for (unsigned int n = 0; n < dof_handler.n_dofs(); ++n)
@@ -1543,6 +1541,23 @@ namespace PlasticityModel
                 }
             }
 
+            assemble_newton_system(solution);  // guess of the displacement from step k (step ii, iii and first half iv in Box 4.2 of the textbook)
+                                               // 'solution' is the current guess of the solution
+
+            TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
+
+
+            // if (newton_step != 0)
+            // {
+            //     for (unsigned int n = 0; n < dof_handler.n_dofs(); ++n)
+            //     {
+            //         if (all_constraints.is_inhomogeneously_constrained(n))
+            //         {
+            //             all_constraints.set_inhomogeneity(n, 0);
+            //         }
+            //     }
+            // }
+
             pcout << "      Solving system... " << std::endl;
             solve_newton_system(newton_increment);  // solve the linear system to find the Newton increment
                                                        // second half of step iv in Box 4.2 of the textbook
@@ -1551,8 +1566,20 @@ namespace PlasticityModel
 
             // Update solution: u^(k+1) = u^(k) + δu^(k)
             // NOTE: Might want to implement line search algorithm
-            newton_increment *= 0.01;      // this is for testing purposes
+
+            std::cout << "      Newton increment norm: " << newton_increment.l2_norm() << std::endl;
+            std::cout << "      Solution norm: " << solution.l2_norm() << std::endl;
+            std::cout << "      Right-hand side: " << newton_rhs.l2_norm() << std::endl;
+            std::cout << "      Matrix norm      " << newton_matrix.frobenius_norm() << std::endl;
+
+            // if (newton_step != 0)
+            // {
+            //     newton_increment *= 0.2;
+            // }
+
             solution += newton_increment;
+
+            // all_constraints.distribute(solution);
 
             residual = newton_rhs;
             const unsigned int start_res = (residual.local_range().first),
@@ -1593,6 +1620,8 @@ namespace PlasticityModel
             }
 
             previous_residual_norm = residual_norm;
+
+            output_results(newton_step);
         }
     }
 
@@ -1745,10 +1774,7 @@ namespace PlasticityModel
         unsigned int n_t_steps = 1;
         for (unsigned int t_step = 0; t_step < n_t_steps; ++t_step)
         {
-            // TODO: If timestep is 0 then take a linear step
-            //  solve the linear step
-            //  for all the others use the newton step
-            for (; current_refinement_cycle < n_refinement_cycles; ++current_refinement_cycle)
+            for (; current_refinement_cycle < /*n_refinement_cycles*/ 1; ++current_refinement_cycle)
             {
                 TimerOutput::Scope t(computing_timer, "Setup");
 
@@ -1771,7 +1797,7 @@ namespace PlasticityModel
 
             solve_newton();
 
-            output_results(current_refinement_cycle);
+            // output_results(current_refinement_cycle);
         }
 
             computing_timer.print_summary();
