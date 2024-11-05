@@ -1,8 +1,8 @@
 set polynomial degree             = 1
-set number of initial refinements = 2
+set number of initial refinements = 4
 set number of cycles              = 1
-set refinement strategy           = global
+set refinement strategy           = percentage
 set output directory              = Tresca
-set applied displacement          = 0.01
+set applied displacement          = 0.0001
 set yield-criteria                = Tresca
 set hardening-law                 = isotropic

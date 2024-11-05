@@ -1365,8 +1365,6 @@ namespace PlasticityModel
                             stress_tensor * fe_values.JxW(q_point);
                     }
                 }
-                newton_matrix = 0;
-
                 cell->get_dof_indices(local_dof_indices);
                 all_constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices,
                     newton_matrix, newton_rhs);
@@ -1401,8 +1399,8 @@ namespace PlasticityModel
             additional_data.n_cycles = 1;
             additional_data.w_cycle = false;
             additional_data.output_details = false;
-            additional_data.smoother_sweeps = 2;
-            additional_data.aggregation_threshold = 1e-2;
+            additional_data.smoother_sweeps = 4;
+            additional_data.aggregation_threshold = 1e-1;
 
             preconditioner.initialize(newton_matrix, additional_data);
         }
@@ -1414,10 +1412,10 @@ namespace PlasticityModel
             TrilinosWrappers::MPI::Vector tmp(locally_owned_dofs, mpi_communicator);
 
             const double relative_accuracy = 1e-8;
-            const double solver_tolerance = relative_accuracy *
-                                            newton_matrix.residual(tmp, newton_increment, newton_rhs);
+            // const double solver_tolerance = relative_accuracy * newton_rhs.l2_norm();
+            const double solver_tolerance = relative_accuracy * newton_matrix.residual(tmp, newton_increment, newton_rhs);
 
-            SolverControl solver_control(newton_matrix.m(), solver_tolerance);
+            SolverControl solver_control(2 * newton_matrix.m(), solver_tolerance);
 
             // Commented out the original BiCGStab solver
             // SolverBicgstab<TrilinosWrappers::MPI::Vector> solver(solver_control);
@@ -1425,11 +1423,16 @@ namespace PlasticityModel
             // Replacing BiCGStab solver with GMRES solver
             SolverGMRES<TrilinosWrappers::MPI::Vector> solver(solver_control);
 
+            std::cout << "      Matrix norm      " << newton_matrix.frobenius_norm() << std::endl;
+            std::cout << "      RHS norm         " << newton_rhs.l2_norm() << std::endl;
+
             // Solve the system: newton_matrix * newton_increment = newton_rhs
             solver.solve(newton_matrix,
                          newton_increment,
                          newton_rhs,
                          preconditioner);
+
+            std::cout << "      Newton increment norm: " << newton_increment.l2_norm() << std::endl;
 
             pcout << "         Error: " << solver_control.initial_value() << " -> "
                   << solver_control.last_value() << " in "
@@ -1476,9 +1479,6 @@ namespace PlasticityModel
             assemble_newton_system(solution);  // guess of the displacement from step k (step ii, iii and first half iv in Box 4.2 of the textbook)
                                                // 'solution' is the current guess of the solution
 
-            std::cout << "      Matrix norm      " << newton_matrix.frobenius_norm() << std::endl;
-            std::cout << "      RHS norm         " << newton_rhs.l2_norm() << std::endl;
-
             TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
 
 
@@ -1488,15 +1488,13 @@ namespace PlasticityModel
 
             all_constraints.distribute(newton_increment);
 
-            std::cout << "      Newton increment norm: " << newton_increment.l2_norm() << std::endl;
-
             // Update solution: u^(k+1) = u^(k) + δu^(k)
             // NOTE: Might want to implement line search algorithm
             // the following is to damp the increment
-            // if (newton_step != 0)
-            // {
-            //     newton_increment *= 0.2;
-            // }
+            if (newton_step != 0)
+            {
+                newton_increment *= 0.2;
+            }
 
             solution += newton_increment;
 
@@ -1523,12 +1521,12 @@ namespace PlasticityModel
                 pcout << "      Previous residual norm: " << previous_residual_norm << std::endl;
                 pcout << "      Current Residual norm: " << residual_norm << std::endl;
 
-                double residual_ratio = previous_residual_norm / residual_norm;
-                pcout << "      Residual norm ratio: " << residual_ratio << std::endl;
+                // double residual_ratio = residual_norm / previous_residual_norm;
+                // pcout << "      Residual norm ratio: " << residual_ratio << std::endl;
 
-                if (std::abs(residual_ratio - 1.0) < tolerance)
+                if (std::abs(residual_norm) < tolerance)
                 {
-                    pcout << "      Convergence achieved with residual ratio: " << residual_ratio << std::endl;
+                    pcout << "      Convergence achieved with residual norm: " << residual_norm << std::endl;
 
                     // NOTE: I am not sure if I have to set the values here
 
@@ -1590,7 +1588,6 @@ namespace PlasticityModel
             constraints_hanging_nodes.distribute(distributed_solution);
 
             solution = distributed_solution;
-            // compute_nonlinear_residual(solution);
         }
     }
 
@@ -1706,7 +1703,6 @@ namespace PlasticityModel
                     refine_grid();
                 }
             }
-
             solve_newton();
         }
 
