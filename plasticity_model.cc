@@ -923,7 +923,6 @@ namespace PlasticityModel
         void setup_system();
         void compute_dirichlet_constraints();
         void assemble_newton_system(const TrilinosWrappers::MPI::Vector& linearization_point, const bool rhs_only = false);
-        void compute_nonlinear_residual(const TrilinosWrappers::MPI::Vector& linearization_point);
         void solve_newton_system(TrilinosWrappers::MPI::Vector &newton_increment);
         void solve_newton();
         void refine_grid();
@@ -1206,9 +1205,7 @@ namespace PlasticityModel
         const QGauss<dim> quadrature_formula(fe_degree + 1);
 
         // Initialize the quadrature point history
-        pcout<<"Initializing quadrature point history..."<<std::endl;
         quadrature_point_history.resize(triangulation.n_locally_owned_active_cells() * quadrature_formula.size());
-        pcout<<"Quadrature point history resized."<<std::endl;
 
         unsigned int local_history_index = 0;
         for (const auto &cell : triangulation.active_cell_iterators())
@@ -1222,7 +1219,6 @@ namespace PlasticityModel
                 }
             }
         }
-        pcout<<"Quadrature point history initialized."<<std::endl;
     }
 
 
@@ -1246,9 +1242,6 @@ namespace PlasticityModel
             Functions::ConstantFunction<dim>(applied_displacement, dim),
             constraints_dirichlet_and_hanging_nodes,
             fe.component_mask(z_displacement));
-
-        // Debugging output
-        pcout << "Applied displacement at top face: " << applied_displacement << std::endl;
 
         VectorTools::interpolate_boundary_values(
             dof_handler,
@@ -1275,6 +1268,7 @@ namespace PlasticityModel
             fe.component_mask(x_displacement));
 
         // NOTE: Code will only work in 3D because of the current working BCs
+        //  therefore the following is not needed
         // if (dim == 3)  // the front and back faces only exist in 3D
         // {
         //     VectorTools::interpolate_boundary_values(
@@ -1382,65 +1376,6 @@ namespace PlasticityModel
         }
     }
 
-    //  FIXME: The following function might not be needed
-    // The following function calculates the residual vector for the nonlinear system of equations in the context
-    // of a plasticity model. The residual represents the difference between the internal forces (arising from the
-    // material's stress response) and the external forces (such as boundary conditions). The residual is crucial in
-    // the Newton-Raphsonn method, which iteratively solves nonlinear systems by minimizing the residual.
-    // The residual needs to be minimized due to balances of forces.
-    // Simplified version of compute_nonlinear_residual function
-    template <int dim>
-    void PlasticityProblem<dim>::compute_nonlinear_residual(const TrilinosWrappers::MPI::Vector &linearization_point)
-    {
-        TimerOutput::Scope t(computing_timer, "Computing residual");
-
-        const QGauss<dim> quadrature_formula(fe_degree + 1);
-        FEValues<dim> fe_values(fe, quadrature_formula, update_values | update_gradients | update_JxW_values);
-
-        const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
-        const unsigned int n_q_points = quadrature_formula.size();
-
-        Vector<double> cell_rhs(dofs_per_cell);
-        std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-        std::vector<SymmetricTensor<2, dim>> strain_tensor(n_q_points);
-
-        const FEValuesExtractors::Vector displacement(0);
-
-        newton_rhs = 0;
-
-        for (const auto &cell : dof_handler.active_cell_iterators())
-        {
-            if (cell->is_locally_owned())
-            {
-                fe_values.reinit(cell);
-                cell_rhs = 0;
-
-                // Get strains at each quadrature point
-                fe_values[displacement].get_function_symmetric_gradients(linearization_point, strain_tensor);
-
-                // Retrieve the quadrature point history for this cell
-                unsigned int cell_index = cell->active_cell_index() * n_q_points;
-
-                for (unsigned int q_point = 0; q_point < n_q_points; ++q_point)
-                {
-                    std::shared_ptr<PointHistory<dim>> &qph = quadrature_point_history[cell_index + q_point];
-
-                    SymmetricTensor<2, dim> stress_tensor = qph->get_stress();
-
-                    for (unsigned int i = 0; i < dofs_per_cell; ++i)
-                    {
-                        cell_rhs(i) -= stress_tensor * fe_values[displacement].symmetric_gradient(i, q_point) * fe_values.JxW(q_point);
-                    }
-                }
-
-                cell->get_dof_indices(local_dof_indices);
-                all_constraints.distribute_local_to_global(cell_rhs, local_dof_indices, newton_rhs);
-            }
-        }
-
-        newton_rhs.compress(VectorOperation::add);
-    }
-
 
     template <int dim>
     void PlasticityProblem<dim>::solve_newton_system(TrilinosWrappers::MPI::Vector &newton_increment)
@@ -1482,7 +1417,7 @@ namespace PlasticityModel
             const double solver_tolerance = relative_accuracy *
                                             newton_matrix.residual(tmp, newton_increment, newton_rhs);
 
-            SolverControl solver_control(2 * newton_matrix.m(), solver_tolerance);
+            SolverControl solver_control(newton_matrix.m(), solver_tolerance);
 
             // Commented out the original BiCGStab solver
             // SolverBicgstab<TrilinosWrappers::MPI::Vector> solver(solver_control);
@@ -1508,7 +1443,7 @@ namespace PlasticityModel
     void PlasticityProblem<dim>::solve_newton()
     {
         TrilinosWrappers::MPI::Vector old_solution(locally_owned_dofs, mpi_communicator);
-        TrilinosWrappers::MPI::Vector residual(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector r(locally_owned_dofs, mpi_communicator);  // residual vector
         TrilinosWrappers::MPI::Vector tmp_vector(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector locally_relevant_tmp_vector(locally_relevant_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs, mpi_communicator);
@@ -1516,10 +1451,7 @@ namespace PlasticityModel
         double residual_norm;
         double previous_residual_norm;
 
-        const double tolerance = 1e-8; // Convergence tolerance for the residual norm
-
-        TrilinosWrappers::MPI::Vector external_force(locally_owned_dofs, mpi_communicator);
-        // Assume external_force is computed or provided elsewhere in the code
+        const double tolerance = 1e-6; // Convergence tolerance for the residual norm
 
         for (unsigned int newton_step = 0; newton_step <= 100; ++newton_step)
         {
@@ -1544,19 +1476,11 @@ namespace PlasticityModel
             assemble_newton_system(solution);  // guess of the displacement from step k (step ii, iii and first half iv in Box 4.2 of the textbook)
                                                // 'solution' is the current guess of the solution
 
+            std::cout << "      Matrix norm      " << newton_matrix.frobenius_norm() << std::endl;
+            std::cout << "      RHS norm         " << newton_rhs.l2_norm() << std::endl;
+
             TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
 
-
-            // if (newton_step != 0)
-            // {
-            //     for (unsigned int n = 0; n < dof_handler.n_dofs(); ++n)
-            //     {
-            //         if (all_constraints.is_inhomogeneously_constrained(n))
-            //         {
-            //             all_constraints.set_inhomogeneity(n, 0);
-            //         }
-            //     }
-            // }
 
             pcout << "      Solving system... " << std::endl;
             solve_newton_system(newton_increment);  // solve the linear system to find the Newton increment
@@ -1564,14 +1488,11 @@ namespace PlasticityModel
 
             all_constraints.distribute(newton_increment);
 
+            std::cout << "      Newton increment norm: " << newton_increment.l2_norm() << std::endl;
+
             // Update solution: u^(k+1) = u^(k) + δu^(k)
             // NOTE: Might want to implement line search algorithm
-
-            std::cout << "      Newton increment norm: " << newton_increment.l2_norm() << std::endl;
-            std::cout << "      Solution norm: " << solution.l2_norm() << std::endl;
-            std::cout << "      Right-hand side: " << newton_rhs.l2_norm() << std::endl;
-            std::cout << "      Matrix norm      " << newton_matrix.frobenius_norm() << std::endl;
-
+            // the following is to damp the increment
             // if (newton_step != 0)
             // {
             //     newton_increment *= 0.2;
@@ -1579,35 +1500,31 @@ namespace PlasticityModel
 
             solution += newton_increment;
 
-            // all_constraints.distribute(solution);
-
-            residual = newton_rhs;
-            const unsigned int start_res = (residual.local_range().first),
-                               end_res = (residual.local_range().second);
+            r = newton_rhs;
+            const unsigned int start_res = (r.local_range().first),
+                               end_res = (r.local_range().second);
             for (unsigned int n = start_res; n < end_res; ++n)
                 if (all_constraints.is_inhomogeneously_constrained(n))
-                    residual(n) = 0;
+                    r(n) = 0;
 
-            residual.compress(VectorOperation::insert);
+            r.compress(VectorOperation::insert);
 
-            residual_norm = residual.l2_norm();
-            // TODO: The following will be needed for external forces
-            // double external_force_norm = external_force.l2_norm();
+            residual_norm = r.l2_norm();
 
-
+            std::cout << "      Solution norm: " << solution.l2_norm() << std::endl;
 
             // Step x: Check for convergence using the ratio of previous residual norm to current residual norm
             if (newton_step == 0)
             {
-                pcout << "      Residual norm: " << residual_norm << std::endl;
+                pcout << "      Current Residual norm: " << residual_norm << std::endl;
             }
             else
             {
                 pcout << "      Previous residual norm: " << previous_residual_norm << std::endl;
-                pcout << "      Residual norm: " << residual_norm << std::endl;
+                pcout << "      Current Residual norm: " << residual_norm << std::endl;
 
                 double residual_ratio = previous_residual_norm / residual_norm;
-                pcout << "      Residual ratio: " << residual_ratio << std::endl;
+                pcout << "      Residual norm ratio: " << residual_ratio << std::endl;
 
                 if (std::abs(residual_ratio - 1.0) < tolerance)
                 {
@@ -1709,9 +1626,6 @@ namespace PlasticityModel
         TimerOutput::Scope t(computing_timer, "Graphical output");
         pcout << "      Writing graphical output... " << std::flush;
 
-        pcout << "number of dofs scalar: " << dof_handler_scalar.n_dofs() << std::endl;
-        pcout << "stress temp size: " << stress_tensor_tmp.size() << std::endl;
-
         // Move mesh
         move_mesh(solution);
 
@@ -1730,8 +1644,6 @@ namespace PlasticityModel
         data_out.add_data_vector(fraction_of_plastic_q_points_per_cell, "fraction_of_plastic_q_points");
 
         stress_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
-
-        pcout << "I run all the way to here!" << stress_tensor_tmp.size() << std::endl;
 
         for (int i = 0; i < dim; ++i)
             for (int j = i; j < dim; ++j)
@@ -1796,8 +1708,6 @@ namespace PlasticityModel
             }
 
             solve_newton();
-
-            // output_results(current_refinement_cycle);
         }
 
             computing_timer.print_summary();
