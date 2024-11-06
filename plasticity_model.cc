@@ -428,23 +428,47 @@ namespace PlasticityModel
 
         if (phi <= 0)
         {
+            std::cout << "Elastic step" << std::endl;
+
             // Elastic step therefore setting values at n+1 to trial values
             elastic_strain_n1 = elastic_strain_trial;
             accumulated_plastic_strain_n1 = accumulated_plastic_strain_trial;
             s1 = s_trial_eigenvalues[0];
             s2 = s_trial_eigenvalues[1];
             s3 = s_trial_eigenvalues[2];
-            // NOTE: I am not sure what the plastic strain tensor should be (I think 0)
-            //  check the textbook
+
+            double p_n1 = p_trial;
+
+            // deviatoric stress in the principal directions
+            s_n1[0][0] = s1;
+            s_n1[1][1] = s2;
+            s_n1[2][2] = s3;
+
+            stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
+
+            elastic_strain_n1 = (1 / (2 * G)) * s_n1 +
+                (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
+
+            // NOTE: Manually reconstructing the stress tensor
+            stress_n1 = symmetrize(elastic_strain_trial_eigenvectors_matrix * stress_n1 * transpose(elastic_strain_trial_eigenvectors_matrix));
+            qph->set_stress(stress_n1);
+            qph->set_elastic_strain(elastic_strain_n1);
+            // qph->set_plastic_strain(plastic_strain_n1);
+            // qph->set_back_stress();
+            qph->set_principal_stresses({stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]});
+            qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
+            // qph->set_is_plastic();
 
             return false;
         }
+
+        std::cout << "Plastic step" << std::endl;
 
         // Plastic step: Return Mapping (Box 8.1, Step iv) from the textbook
         double delta_gamma;
         double residual = s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] -
            yield_stress(yield_stress_0, H, accumulated_plastic_strain_n);
-        double tolerance = 1e-10;
+        double tolerance = 1e-2;
 
         // Initially say it is going to be a two-vector return
         bool local_newton_converged_one_v = false;
@@ -452,36 +476,49 @@ namespace PlasticityModel
         // NOTE: The following can be solved in closed form for linear isotropic hardening therefore the Newton loop
         //  is not needed (delta_gamma can be solved directly)
         // One-vector return to main plane (Box 8.2) from the textbook
-        for (unsigned int iteration = 0; iteration < 50; ++iteration)
-        {
-            // Update yield stress after accumulating plastic strain (Box 8.2, Step ii)
-            // TODO: For general isotropic hardening the hardening slope (hardening_modulus) needs to be determined
-            //  for linear isotropic hardening it is constant
-            //  see box 8.2 in Computational Methods for Plasticity on how to determine the hardening slope
-            double residual_derivative = -4 * G - H;
-            delta_gamma =- residual / residual_derivative;  // new guess for delta_gamma
+        // for (unsigned int iteration = 0; iteration < 1000; ++iteration)
+        // {
+        //     // Update yield stress after accumulating plastic strain (Box 8.2, Step ii)
+        //     // TODO: For general isotropic hardening the hardening slope (hardening_modulus) needs to be determined
+        //     //  for linear isotropic hardening it is constant
+        //     //  see box 8.2 in Computational Methods for Plasticity on how to determine the hardening slope
+        //     double residual_derivative = -4 * G - H;
+        //     delta_gamma -= residual / residual_derivative;  // new guess for delta_gamma
+        //
+        //     // Compute the residual (Box 8.2, Step ii)
+        //     double residual = s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] - 4.0 * G * delta_gamma
+        //     - yield_stress(yield_stress_0, H,
+        //         accumulated_plastic_strain_n + delta_gamma);;
+        //
+        //     if (std::abs(residual) < tolerance)
+        //     {
+        //         // Update principal deviatoric stresses (Box 8.2, Step iii)
+        //         s1 = s_trial_eigenvalues[0] - 2.0 * G * delta_gamma;
+        //         s2 = s_trial_eigenvalues[1];
+        //         s3 = s_trial_eigenvalues[2] + 2.0 * G * delta_gamma;
+        //
+        //         accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
+        //
+        //         local_newton_converged_one_v = true;
+        //
+        //         break;
+        //     }
+        // }
 
-            // Compute the residual (Box 8.2, Step ii)
-            double residual = s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] - 4.0 * G * delta_gamma
-            - yield_stress(yield_stress_0, H,
-                accumulated_plastic_strain_n + delta_gamma);;
+        // NOTE: Solving in closed form because the one-vector return is not converging
+        delta_gamma = -(H * accumulated_plastic_strain_n + s_trial_eigenvalues[0] + s_trial_eigenvalues[dim - 1] + yield_stress_0) /
+            (4 * G + H);
 
-            if (std::abs(residual) < tolerance)
-            {
-                // Update principal deviatoric stresses (Box 8.2, Step iii)
-                s1 = s_trial_eigenvalues[0] - 2.0 * G * delta_gamma;
-                s2 = s_trial_eigenvalues[1];
-                s3 = s_trial_eigenvalues[2] + 2.0 * G * delta_gamma;
+        // Update principal deviatoric stresses (Box 8.2, Step iii)
+        s1 = s_trial_eigenvalues[0] - 2.0 * G * delta_gamma;
+        s2 = s_trial_eigenvalues[1];
+        s3 = s_trial_eigenvalues[2] + 2.0 * G * delta_gamma;
 
-                local_newton_converged_one_v = true;
+        accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
 
-                break;
-            }
-        }
-
-        // Checking if the Newton iteration converged
-        AssertThrow(local_newton_converged_one_v,
-            ExcMessage("Newton iteration did not converge for one-vector return"));
+        // // Checking if the Newton iteration converged
+        // AssertThrow(local_newton_converged_one_v,
+        //     ExcMessage("Newton iteration did not converge for one-vector return"));
 
         // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b) from the textbook
         if (s1 >= s2 && s2 >= s3)
@@ -662,7 +699,6 @@ namespace PlasticityModel
         // TODO: Do this for the rest of the variables
         //  some of the variables are not being set yet
 
-        // std::array<double, dim> stress_n1_array = {stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]};
         // NOTE: Manually reconstructing the stress tensor
         stress_n1 = symmetrize(elastic_strain_trial_eigenvectors_matrix * stress_n1 * transpose(elastic_strain_trial_eigenvectors_matrix));
         qph->set_stress(stress_n1);
@@ -774,7 +810,7 @@ namespace PlasticityModel
             {
                 for (unsigned int j = 0; j < dim; ++j)
                 {
-                    D =+ dy_dx[i][j] * outer_product(E[i], E[i]);
+                    D += dy_dx[i][j] * outer_product(E[i], E[i]);
                 }
             }
         }
@@ -1399,8 +1435,8 @@ namespace PlasticityModel
             additional_data.n_cycles = 1;
             additional_data.w_cycle = false;
             additional_data.output_details = false;
-            additional_data.smoother_sweeps = 4;
-            additional_data.aggregation_threshold = 1e-1;
+            additional_data.smoother_sweeps = 2;
+            additional_data.aggregation_threshold = 1e-2;
 
             preconditioner.initialize(newton_matrix, additional_data);
         }
@@ -1415,7 +1451,7 @@ namespace PlasticityModel
             // const double solver_tolerance = relative_accuracy * newton_rhs.l2_norm();
             const double solver_tolerance = relative_accuracy * newton_matrix.residual(tmp, newton_increment, newton_rhs);
 
-            SolverControl solver_control(2 * newton_matrix.m(), solver_tolerance);
+            SolverControl solver_control(newton_matrix.m(), solver_tolerance);
 
             // Commented out the original BiCGStab solver
             // SolverBicgstab<TrilinosWrappers::MPI::Vector> solver(solver_control);
@@ -1431,8 +1467,6 @@ namespace PlasticityModel
                          newton_increment,
                          newton_rhs,
                          preconditioner);
-
-            std::cout << "      Newton increment norm: " << newton_increment.l2_norm() << std::endl;
 
             pcout << "         Error: " << solver_control.initial_value() << " -> "
                   << solver_control.last_value() << " in "
@@ -1454,7 +1488,7 @@ namespace PlasticityModel
         double residual_norm;
         double previous_residual_norm;
 
-        const double tolerance = 1e-6; // Convergence tolerance for the residual norm
+        const double tolerance = 1e-2; // Convergence tolerance for the residual norm
 
         for (unsigned int newton_step = 0; newton_step <= 100; ++newton_step)
         {
@@ -1488,6 +1522,8 @@ namespace PlasticityModel
 
             all_constraints.distribute(newton_increment);
 
+            std::cout << "      Newton increment norm: " << newton_increment.l2_norm() << std::endl;
+
             // Update solution: u^(k+1) = u^(k) + δu^(k)
             // NOTE: Might want to implement line search algorithm
             // the following is to damp the increment
@@ -1496,7 +1532,11 @@ namespace PlasticityModel
                 newton_increment *= 0.2;
             }
 
+            std::cout << "      Solution norm before adding increment: " << solution.l2_norm() << std::endl;
+
             solution += newton_increment;
+
+            std::cout << "      Solution norm after adding increment: " << solution.l2_norm() << std::endl;
 
             r = newton_rhs;
             const unsigned int start_res = (r.local_range().first),
@@ -1509,8 +1549,6 @@ namespace PlasticityModel
 
             residual_norm = r.l2_norm();
 
-            std::cout << "      Solution norm: " << solution.l2_norm() << std::endl;
-
             // Step x: Check for convergence using the ratio of previous residual norm to current residual norm
             if (newton_step == 0)
             {
@@ -1521,25 +1559,24 @@ namespace PlasticityModel
                 pcout << "      Previous residual norm: " << previous_residual_norm << std::endl;
                 pcout << "      Current Residual norm: " << residual_norm << std::endl;
 
-                // double residual_ratio = residual_norm / previous_residual_norm;
-                // pcout << "      Residual norm ratio: " << residual_ratio << std::endl;
+                double residual_norm_ratio = previous_residual_norm / residual_norm;
+                pcout << "      Residual norm ratio: " << residual_norm_ratio << std::endl;
 
-                if (std::abs(residual_norm) < tolerance)
+                if (std::abs(residual_norm_ratio - 1) < tolerance)
                 {
-                    pcout << "      Convergence achieved with residual norm: " << residual_norm << std::endl;
+                    pcout << "Convergence achieved with residual norm ratio difference from 1:" << residual_norm_ratio - 1 << std::endl;
 
                     // NOTE: I am not sure if I have to set the values here
+
+                    output_results(newton_step);
 
                     break;
                 }
             }
 
             previous_residual_norm = residual_norm;
-
-            output_results(newton_step);
         }
     }
-
 
 
     // The following function is essential for adaptive meshing
