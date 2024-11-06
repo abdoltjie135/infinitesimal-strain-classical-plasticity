@@ -428,7 +428,7 @@ namespace PlasticityModel
 
         if (phi <= 0)
         {
-            std::cout << "Elastic step" << std::endl;
+            // std::cout << "Elastic step" << std::endl;
 
             // Elastic step therefore setting values at n+1 to trial values
             elastic_strain_n1 = elastic_strain_trial;
@@ -462,13 +462,13 @@ namespace PlasticityModel
             return false;
         }
 
-        std::cout << "Plastic step" << std::endl;
+        // std::cout << "Plastic step" << std::endl;
 
         // Plastic step: Return Mapping (Box 8.1, Step iv) from the textbook
         double delta_gamma;
         double residual = s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] -
            yield_stress(yield_stress_0, H, accumulated_plastic_strain_n);
-        double tolerance = 1e-2;
+        double tolerance = 1e-6;
 
         // Initially say it is going to be a two-vector return
         bool local_newton_converged_one_v = false;
@@ -476,38 +476,39 @@ namespace PlasticityModel
         // NOTE: The following can be solved in closed form for linear isotropic hardening therefore the Newton loop
         //  is not needed (delta_gamma can be solved directly)
         // One-vector return to main plane (Box 8.2) from the textbook
-        // for (unsigned int iteration = 0; iteration < 1000; ++iteration)
-        // {
-        //     // Update yield stress after accumulating plastic strain (Box 8.2, Step ii)
-        //     // TODO: For general isotropic hardening the hardening slope (hardening_modulus) needs to be determined
-        //     //  for linear isotropic hardening it is constant
-        //     //  see box 8.2 in Computational Methods for Plasticity on how to determine the hardening slope
-        //     double residual_derivative = -4 * G - H;
-        //     delta_gamma -= residual / residual_derivative;  // new guess for delta_gamma
-        //
-        //     // Compute the residual (Box 8.2, Step ii)
-        //     double residual = s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] - 4.0 * G * delta_gamma
-        //     - yield_stress(yield_stress_0, H,
-        //         accumulated_plastic_strain_n + delta_gamma);;
-        //
-        //     if (std::abs(residual) < tolerance)
-        //     {
-        //         // Update principal deviatoric stresses (Box 8.2, Step iii)
-        //         s1 = s_trial_eigenvalues[0] - 2.0 * G * delta_gamma;
-        //         s2 = s_trial_eigenvalues[1];
-        //         s3 = s_trial_eigenvalues[2] + 2.0 * G * delta_gamma;
-        //
-        //         accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
-        //
-        //         local_newton_converged_one_v = true;
-        //
-        //         break;
-        //     }
-        // }
+        for (unsigned int iteration = 0; iteration < 1000; ++iteration)
+        {
+            // Update yield stress after accumulating plastic strain (Box 8.2, Step ii)
+            // TODO: For general isotropic hardening the hardening slope (hardening_modulus) needs to be determined
+            //  for linear isotropic hardening it is constant
+            //  see box 8.2 in Computational Methods for Plasticity on how to determine the hardening slope
+            double residual_derivative = -4.0 * G - H;
+            delta_gamma -= residual / residual_derivative;  // new guess for delta_gamma
 
+            // Compute the residual (Box 8.2, Step ii)
+            residual = s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] - 4.0 * G * delta_gamma
+            - yield_stress(yield_stress_0, H,
+                accumulated_plastic_strain_n + delta_gamma);;
+
+            if (std::abs(residual) < tolerance)
+            {
+                // Update principal deviatoric stresses (Box 8.2, Step iii)
+                s1 = s_trial_eigenvalues[0] - 2.0 * G * delta_gamma;
+                s2 = s_trial_eigenvalues[1];
+                s3 = s_trial_eigenvalues[2] + 2.0 * G * delta_gamma;
+
+                accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
+
+                local_newton_converged_one_v = true;
+
+                break;
+            }
+        }
+
+        /*
         // NOTE: Solving in closed form because the one-vector return is not converging
-        delta_gamma = -(H * accumulated_plastic_strain_n + s_trial_eigenvalues[0] + s_trial_eigenvalues[dim - 1] + yield_stress_0) /
-            (4 * G + H);
+        delta_gamma = (s_trial_eigenvalues[0] - s_trial_eigenvalues[dim - 1] - yield_stress_0 - H *
+            accumulated_plastic_strain_n) / (4 * G + H);
 
         // Update principal deviatoric stresses (Box 8.2, Step iii)
         s1 = s_trial_eigenvalues[0] - 2.0 * G * delta_gamma;
@@ -515,6 +516,7 @@ namespace PlasticityModel
         s3 = s_trial_eigenvalues[2] + 2.0 * G * delta_gamma;
 
         accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
+        */
 
         // // Checking if the Newton iteration converged
         // AssertThrow(local_newton_converged_one_v,
@@ -941,8 +943,6 @@ namespace PlasticityModel
     }
 
 
-
-
     template <int dim>
     class PlasticityProblem
     {
@@ -1166,7 +1166,7 @@ namespace PlasticityModel
     {
         // unit cube mesh
         const Point<dim> p1(0, 0, 0);
-        const Point<dim> p2(1.0, 1.0, 1.0);
+        const Point<dim> p2(1.0, 10, 80.0);
 
         GridGenerator::hyper_rectangle(triangulation, p1, p2, true);
 
@@ -1451,7 +1451,7 @@ namespace PlasticityModel
             // const double solver_tolerance = relative_accuracy * newton_rhs.l2_norm();
             const double solver_tolerance = relative_accuracy * newton_matrix.residual(tmp, newton_increment, newton_rhs);
 
-            SolverControl solver_control(newton_matrix.m(), solver_tolerance);
+            SolverControl solver_control(3 * newton_matrix.m(), solver_tolerance);
 
             // Commented out the original BiCGStab solver
             // SolverBicgstab<TrilinosWrappers::MPI::Vector> solver(solver_control);
@@ -1527,10 +1527,10 @@ namespace PlasticityModel
             // Update solution: u^(k+1) = u^(k) + δu^(k)
             // NOTE: Might want to implement line search algorithm
             // the following is to damp the increment
-            if (newton_step != 0)
-            {
-                newton_increment *= 0.2;
-            }
+            // if (newton_step != 0)
+            // {
+            //     newton_increment *= 0.1;
+            // }
 
             std::cout << "      Solution norm before adding increment: " << solution.l2_norm() << std::endl;
 
