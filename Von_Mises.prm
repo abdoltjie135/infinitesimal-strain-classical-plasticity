@@ -1,5 +1,5 @@
 set polynomial degree             = 1
-set number of initial refinements = 2
+set number of initial refinements = 1
 set number of cycles              = 1
 set refinement strategy           = global
 set output directory              = Von_Mises
