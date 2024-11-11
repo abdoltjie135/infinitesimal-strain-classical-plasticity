@@ -136,6 +136,8 @@ namespace PlasticityModel
                 outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
                     bulk_modulus * outer_product(unit_symmetric_tensor<dim>(),
                         unit_symmetric_tensor<dim>());
+
+        is_plastic = false;
     }
 
 
@@ -339,18 +341,6 @@ namespace PlasticityModel
     }
 
 
-    // NOTE: I am having difficulty getting the following to work
-    // Function to reconstruct the tensor from principal values and sorted eigenvectors in the original co-ordinate system
-    // template <int dim>
-    // SymmetricTensor<2, dim> reconstruct_tensor(const std::array<double, dim> &principal_values,
-    //                                            const Tensor<2, dim> &eigenvectors_tensor)
-    // {
-    //     Tensor<2, dim> principal_values_tensor = reconstruct_tensor(principal_values, eigenvectors_tensor);
-    //     // TODO: Add a check to ensure that it is not a symmetric tensor already
-    //     return symmetrize(principal_values_tensor);
-    // }
-
-
     template <int dim>
     SymmetricTensor<2, dim> reconstruct_tensor(const std::array<double, dim> &principal_values,
                                       const Tensor<2, dim> &eigenvectors_tensor)
@@ -479,6 +469,8 @@ namespace PlasticityModel
 
                 return false;
             }
+
+            qph->set_is_plastic(true);
 
             // Plastic step: Return Mapping (Box 8.1, Step iv) from the textbook
             // double delta_gamma;
@@ -906,6 +898,8 @@ namespace PlasticityModel
                 return false;  // it is elastic
             }
 
+            qph->set_is_plastic(true);
+
             // std::cout << "Plastic step" << std::endl;
 
             double residual = q_trial - yield_stress(yield_stress_0, H, accumulated_plastic_strain_n);
@@ -1122,14 +1116,10 @@ namespace PlasticityModel
     }
 
 
-    // NOTE: Everything in this namespace could be useless
-    //  it is being used though
     namespace EquationData
     {
         template <int dim>
         class BoundaryForce : public Function<dim>
-            // Function<dim> is a base class used to represent a scalar or vector-valued function that can be
-            // defined over a domain
         {
         public:
             BoundaryForce();
@@ -1146,9 +1136,7 @@ namespace PlasticityModel
 
         // The following function returns the value of the boundary force (value) at a given point which is zero
         template <int dim>
-        double BoundaryForce<dim>::value(const Point<dim>&, const unsigned int) const  // parameters are not
-                                                                                       // named because they are
-                                                                                       // not used
+        double BoundaryForce<dim>::value(const Point<dim>&, const unsigned int) const
         {
             return 0.; // the boundary force is zero
         }
@@ -1159,30 +1147,6 @@ namespace PlasticityModel
         {
             for (unsigned int c = 0; c < this->n_components; ++c)
                 values(c) = BoundaryForce<dim>::value(p, c);
-        }
-
-        template <int dim>
-        class BoundaryValues : public Function<dim>
-        {
-        public:
-            BoundaryValues();
-
-            virtual double value(const Point<dim>& p, const unsigned int component = 0) const override;
-        };
-
-        template <int dim>
-        BoundaryValues<dim>::BoundaryValues()
-            : Function<dim>(dim)
-        {
-        }
-
-        template <int dim>
-        double BoundaryValues<dim>::value(const Point<dim>& p, const unsigned int component) const
-        {
-            if (component == 2 && p[2] >= 1 - 1e-3) // if z-direction and z = 1
-                return 0.1;
-            else
-                return 0.0;
         }
     }
 
@@ -1207,7 +1171,7 @@ namespace PlasticityModel
         void solve_newton();
         void refine_grid();
         void move_mesh(const TrilinosWrappers::MPI::Vector& displacement) const;
-        void output_results(const unsigned int current_refinement_cycle);
+        void output_results(const unsigned int current_refinement_cycle, const std::string output_name = "solution");
 
         MPI_Comm mpi_communicator;
         ConditionalOStream pcout;
@@ -1236,7 +1200,9 @@ namespace PlasticityModel
         AffineConstraints<double> scalar_constraints;
 
         IndexSet active_set;  // not sure if this is needed for the plasticity code
-        Vector<float> fraction_of_plastic_q_points_per_cell;
+
+        // NOTE: This should be a Trillinos vector
+        Vector<double> accumulated_plastic_strain;
 
         std::vector<SymmetricTensor<2, dim>> stress_at_q_points;
 
@@ -1249,6 +1215,8 @@ namespace PlasticityModel
         TrilinosWrappers::MPI::Vector stress_tensor_diagonal;
         TrilinosWrappers::MPI::Vector stress_tensor_off_diagonal;
         TrilinosWrappers::MPI::Vector stress_tensor_tmp;
+        TrilinosWrappers::MPI::Vector accumulated_plastic_strain_vector;
+
 
         const double sigma_0, hardening_slope, kappa, mu, gamma_kin;
         ConstitutiveLaw<dim> constitutive_law;
@@ -1461,7 +1429,7 @@ namespace PlasticityModel
             newton_rhs.reinit(locally_owned_dofs, mpi_communicator);
             newton_rhs_uncondensed.reinit(locally_owned_dofs, mpi_communicator);
             diag_mass_matrix_vector.reinit(locally_owned_dofs, mpi_communicator);
-            fraction_of_plastic_q_points_per_cell.reinit(triangulation.n_active_cells());
+            accumulated_plastic_strain.reinit(triangulation.n_active_cells());
             stress_tensor_diagonal.reinit(locally_owned_dofs, mpi_communicator);
             stress_tensor_off_diagonal.reinit(locally_owned_dofs, mpi_communicator);
             stress_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
@@ -1513,7 +1481,8 @@ namespace PlasticityModel
         const FEValuesExtractors::Scalar y_displacement(1);
         const FEValuesExtractors::Scalar z_displacement(2);
 
-        // the following function enforces dirichlet constrains over boundaries
+        // Uniaxial displacement
+
         VectorTools::interpolate_boundary_values(
             dof_handler,
             // top face
@@ -1533,40 +1502,49 @@ namespace PlasticityModel
 
         VectorTools::interpolate_boundary_values(
             dof_handler,
-            // right face
-            1,
+            // left face
+            0,
             Functions::ZeroFunction<dim>(dim),
             constraints_dirichlet_and_hanging_nodes,
             fe.component_mask(x_displacement));
 
-        // VectorTools::interpolate_boundary_values(
-        //     dof_handler,
-        //     // left face
-        //     0,
-        //     Functions::ZeroFunction<dim>(dim),
-        //     constraints_dirichlet_and_hanging_nodes,
-        //     fe.component_mask(x_displacement));
-
-        // NOTE: Code will only work in 3D because of the current working BCs
-        //  therefore the following is not needed
         if (dim == 3)  // the front and back faces only exist in 3D
         {
             VectorTools::interpolate_boundary_values(
                 dof_handler,
-                // front face
-                3,
+                // back face
+                2,
                 Functions::ZeroFunction<dim>(dim),
                 constraints_dirichlet_and_hanging_nodes,
                 fe.component_mask(y_displacement));
-
-            // VectorTools::interpolate_boundary_values(
-            //     dof_handler,
-            //     // back face
-            //     2,
-            //     Functions::ZeroFunction<dim>(dim),
-            //     constraints_dirichlet_and_hanging_nodes,
-            //     fe.component_mask(y_displacement));
         }
+
+        // Simple shear
+
+        // VectorTools::interpolate_boundary_values(
+        //     dof_handler,
+        //     // top face
+        //     5,
+        //     // EquationData::BoundaryValues<dim>(),
+        //     Functions::ConstantFunction<dim>(applied_displacement, dim),
+        //     constraints_dirichlet_and_hanging_nodes,
+        //     fe.component_mask(x_displacement));
+        //
+        // VectorTools::interpolate_boundary_values(
+        //     dof_handler,
+        //     // bottom face
+        //     0,
+        //     Functions::ZeroFunction<dim>(dim),
+        //     constraints_dirichlet_and_hanging_nodes,
+        //     fe.component_mask(x_displacement));
+        //
+        // VectorTools::interpolate_boundary_values(
+        //     dof_handler,
+        //     // left face
+        //     2,
+        //     Functions::ZeroFunction<dim>(dim),
+        //     constraints_dirichlet_and_hanging_nodes,
+        //     fe.component_mask(y_displacement));
     }
 
 
@@ -1726,7 +1704,7 @@ namespace PlasticityModel
         double residual_norm;
         double previous_residual_norm;
 
-        const double tolerance = 1e-4; // Convergence tolerance for the residual norm
+        const double tolerance = 1e-6; // Convergence tolerance for the residual norm
 
         double first_newton_increment_norm;
 
@@ -1800,6 +1778,7 @@ namespace PlasticityModel
                 pcout << "      Current increment norm / First increment norm: "  << newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
 
                 if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
+                // if (std::abs(residual_norm) < tolerance)
                 {
                     // NOTE: I am not sure if I have to set the values here
 
@@ -1893,7 +1872,8 @@ namespace PlasticityModel
 
 
     template <int dim>
-    void PlasticityProblem<dim>::output_results(const unsigned int current_refinement_cycle)
+    void PlasticityProblem<dim>::output_results(const unsigned int current_refinement_cycle,
+        const std::string output_name)
     {
         TimerOutput::Scope t(computing_timer, "Graphical output");
         pcout << "      Writing graphical output... " << std::flush;
@@ -1911,11 +1891,30 @@ namespace PlasticityModel
         const std::vector<DataComponentInterpretation::DataComponentInterpretation>
             data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
 
+
+
         data_out.add_data_vector(solution, std::vector<std::string>(dim, "displacement"),
                                  DataOut<dim>::type_dof_data, data_component_interpretation);
-        data_out.add_data_vector(fraction_of_plastic_q_points_per_cell, "fraction_of_plastic_q_points");
+
+        accumulated_plastic_strain_vector.reinit(locally_owned_scalar_dofs, mpi_communicator);
+
+        VectorTools::project(mapping, dof_handler_scalar, scalar_constraints, quadrature_formula,
+                                     [&](const typename DoFHandler<dim>::active_cell_iterator &cell,
+                                         const unsigned int q_point) -> double
+                                     {
+                                         unsigned int local_index = cell->active_cell_index() *
+                                             quadrature_formula.size();
+                                         const std::shared_ptr<PointHistory<dim>> &lqph =
+                                             quadrature_point_history[local_index + q_point];
+                                         //const SymmetricTensor<2, dim> &T = lqph->get_a();
+                                         return lqph->get_accumulated_plastic_strain();
+                                         // return T[i][j];
+                                     },
+                                     accumulated_plastic_strain_vector);
+        data_out.add_data_vector(dof_handler_scalar, accumulated_plastic_strain_vector, "plastic_strain");
 
         stress_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
+
 
         for (int i = 0; i < dim; ++i)
             for (int j = i; j < dim; ++j)
@@ -1939,7 +1938,7 @@ namespace PlasticityModel
 
         data_out.build_patches();
         const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(output_dir,
-            "solution", current_refinement_cycle, mpi_communicator, 2);
+            output_name, current_refinement_cycle, mpi_communicator, 2);
         pcout << pvtu_filename << std::endl;
 
         // Move mesh back
@@ -1955,6 +1954,7 @@ namespace PlasticityModel
     void PlasticityProblem<dim>::run()
     {
         computing_timer.reset();
+
         unsigned int n_t_steps = 1;
         for (unsigned int t_step = 0; t_step < n_t_steps; ++t_step)
         {
@@ -1970,6 +1970,8 @@ namespace PlasticityModel
                 {
                     make_grid();
                     setup_system();
+
+                    output_results(0, "initial");
                 }
                 else
                     // refine the grid if the current refinement cycle is not the first one
