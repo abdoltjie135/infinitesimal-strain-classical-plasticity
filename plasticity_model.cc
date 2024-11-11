@@ -1692,6 +1692,132 @@ namespace PlasticityModel
     }
 
 
+    // template <int dim>
+    // void PlasticityProblem<dim>::solve_newton()
+    // {
+    //     TrilinosWrappers::MPI::Vector old_solution(locally_owned_dofs, mpi_communicator);
+    //     TrilinosWrappers::MPI::Vector r(locally_owned_dofs, mpi_communicator);  // residual vector
+    //     TrilinosWrappers::MPI::Vector tmp_vector(locally_owned_dofs, mpi_communicator);
+    //     TrilinosWrappers::MPI::Vector locally_relevant_tmp_vector(locally_relevant_dofs, mpi_communicator);
+    //     TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs, mpi_communicator);
+    //
+    //     double residual_norm;
+    //
+    //     const double tolerance = 1e-6; // Convergence tolerance for the residual norm
+    //
+    //     double first_newton_increment_norm;
+    //
+    //     for (unsigned int newton_step = 0; newton_step <= 100; ++newton_step)
+    //     {
+    //         pcout << ' ' << std::endl;
+    //         pcout << "   Newton iteration " << newton_step << std::endl;
+    //
+    //         pcout << "      Assembling system... " << std::endl;
+    //         newton_matrix = 0.;
+    //         newton_rhs = 0.;
+    //
+    //         if (newton_step != 0)
+    //         {
+    //             for (unsigned int n = 0; n < dof_handler.n_dofs(); ++n)
+    //             {
+    //                 if (all_constraints.is_inhomogeneously_constrained(n))
+    //                 {
+    //                     all_constraints.set_inhomogeneity(n, 0);
+    //                 }
+    //             }
+    //         }
+    //
+    //         assemble_newton_system(solution);  // Assemble the Newton system with the current solution
+    //
+    //         TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
+    //
+    //         pcout << "      Solving system... " << std::endl;
+    //         solve_newton_system(newton_increment);  // Solve for the Newton increment
+    //
+    //         double previous_residual_norm = newton_rhs.l2_norm();
+    //
+    //         all_constraints.distribute(newton_increment);
+    //
+    //         // Line search algorithm
+    //         double alpha = 1.0;
+    //         const double beta = 0.5; // Reduction factor for alpha
+    //         const double sufficient_decrease = 0.9; // Factor for sufficient residual decrease
+    //         TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
+    //
+    //         while (true)
+    //         {
+    //             // Compute tentative solution
+    //             tmp_solution = solution;
+    //             tmp_solution.add(alpha, newton_increment);
+    //
+    //             // Assemble residual with tmp_solution
+    //             assemble_newton_system(tmp_solution, true); // Only assemble RHS (residual)
+    //
+    //             // Compute residual norm
+    //             r = newton_rhs;
+    //             const unsigned int start_res = r.local_range().first;
+    //             const unsigned int end_res = r.local_range().second;
+    //             for (unsigned int n = start_res; n < end_res; ++n)
+    //                 if (all_constraints.is_inhomogeneously_constrained(n))
+    //                     r(n) = 0.0;
+    //
+    //             r.compress(VectorOperation::insert);
+    //
+    //             residual_norm = r.l2_norm();
+    //
+    //             pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
+    //
+    //             if (residual_norm <= previous_residual_norm * sufficient_decrease)
+    //             {
+    //                 // Accept the step if residual is sufficiently decreased
+    //                 break;
+    //             }
+    //             else
+    //             {
+    //                 // Reduce alpha and try again
+    //                 alpha *= beta;
+    //                 if (alpha < 1e-6)
+    //                 {
+    //                     pcout << "      Line search failed to find acceptable alpha." << std::endl;
+    //                     break;
+    //                 }
+    //             }
+    //         }
+    //
+    //         // Update solution with the accepted alpha
+    //         solution = tmp_solution;
+    //
+    //         // Update previous residual norm
+    //         previous_residual_norm = residual_norm;
+    //
+    //         output_results(newton_step);
+    //
+    //         // Check for convergence using the norm of the Newton increment
+    //         if (newton_step == 0)
+    //         {
+    //             first_newton_increment_norm = newton_increment.l2_norm();
+    //
+    //             pcout << "      First Newton increment norm: " << first_newton_increment_norm << std::endl;
+    //
+    //             pcout << "      Residual norm: " << residual_norm << std::endl;
+    //         }
+    //         else
+    //         {
+    //             pcout << "      First Newton increment norm: " << first_newton_increment_norm << std::endl;
+    //
+    //             pcout << "      Current Newton increment norm: " << newton_increment.l2_norm() << std::endl;
+    //
+    //             pcout << "      Current increment norm / First increment norm: "  << newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
+    //
+    //             if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
+    //             {
+    //                 break;
+    //             }
+    //         }
+    //     }
+    // }
+
+
     template <int dim>
     void PlasticityProblem<dim>::solve_newton()
     {
@@ -1778,20 +1904,12 @@ namespace PlasticityModel
                 pcout << "      Current increment norm / First increment norm: "  << newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
 
                 if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
-                // if (std::abs(residual_norm) < tolerance)
                 {
-                    // NOTE: I am not sure if I have to set the values here
-
-                    // output_results(newton_step);
-
                     break;
                 }
             }
-            // std::cout << "      Solution norm before adding increment: " << solution.l2_norm() << std::endl;
 
             solution += newton_increment;
-
-            // std::cout << "      Solution norm after adding increment: " << solution.l2_norm() << std::endl;
         }
     }
 
