@@ -1709,7 +1709,7 @@ namespace PlasticityModel
 
         double residual_norm;
 
-        const double tolerance = 1e-6; // Convergence tolerance for the residual norm
+        const double tolerance = 1e-5; // Convergence tolerance for the residual norm
 
         double first_newton_increment_norm;
 
@@ -1820,7 +1820,8 @@ namespace PlasticityModel
 
                 pcout << "      Current increment norm / First increment norm: "  << newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
 
-                if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
+                // if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
+                if (std::abs(residual_norm) <= tolerance)
                 {
                     break;
                 }
@@ -2102,18 +2103,14 @@ namespace PlasticityModel
 
         double displacement = 0;
 
-        double delta_displacement = 0;
-
         bool reverse_loading = false;
 
         unsigned int n_t_steps = 120;
         const double delta_t = 1.0 / n_t_steps;
-        unsigned int t_step_tension = (2.0 / 5.0) * n_t_steps;
+
         for (unsigned int t_step = 0; t_step < n_t_steps; ++t_step)
         {
             std::cout << "Step: " << t_step << std::endl;
-
-            // delta_displacement = - displacement;
 
             if (reverse_loading == false && displacement >= applied_displacement)
             {
@@ -2122,16 +2119,13 @@ namespace PlasticityModel
 
             if (reverse_loading == false)
             {
-                // displacement +=  t_step * delta_t * applied_displacement;
-                delta_displacement = delta_t * applied_displacement;
+                displacement +=  t_step * delta_t * applied_displacement;
             }
             else
             {
-                // displacement -= t_step * delta_t * applied_displacement;
-                delta_displacement = -delta_t * applied_displacement;
+                while (std::abs(displacement) < 2 * applied_displacement)
+                displacement -= t_step * delta_t * applied_displacement;
             }
-
-            // delta_displacement += displacement;
 
             // setup hanging nodes and Dirichlet constraints
             {
@@ -2145,7 +2139,7 @@ namespace PlasticityModel
                     << "   Number of degrees of freedom: " << dof_handler.n_dofs()
                     << std::endl;
 
-                compute_dirichlet_constraints(delta_displacement);
+                compute_dirichlet_constraints(displacement);
 
                 all_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);
                 all_constraints.close();
