@@ -891,6 +891,12 @@ namespace PlasticityModel
                 SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
                 stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
 
+                // elastic
+                consistent_tangent_operator = 2.0 * G * (identity_tensor<dim>() -
+                    1.0 / 3.0 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
+                        K * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+
+                qph->set_consistent_tangent_operator(consistent_tangent_operator);
                 qph->set_stress(stress_n1_reconstructed);
                 qph->set_elastic_strain(elastic_strain_n1);
                 qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
@@ -1165,7 +1171,7 @@ namespace PlasticityModel
     private:
         void make_grid();
         void setup_system();
-        void compute_dirichlet_constraints();
+        void compute_dirichlet_constraints(const double displacment);
         void assemble_newton_system(const TrilinosWrappers::MPI::Vector& linearization_point, const bool rhs_only = false);
         void solve_newton_system(TrilinosWrappers::MPI::Vector &newton_increment);
         void solve_newton();
@@ -1243,7 +1249,7 @@ namespace PlasticityModel
         const bool transfer_solution;
         std::string output_dir;
         const unsigned int n_refinement_cycles;
-        unsigned int current_refinement_cycle;
+        unsigned int current_step;
     };
 
 
@@ -1345,7 +1351,7 @@ namespace PlasticityModel
 
           , transfer_solution(prm.get_bool("transfer solution"))
           , n_refinement_cycles(prm.get_integer("number of cycles"))
-          , current_refinement_cycle(0)
+          , current_step(0)
 
     {
         std::string strat = prm.get("refinement strategy");
@@ -1401,27 +1407,27 @@ namespace PlasticityModel
             locally_relevant_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler);
             locally_relevant_scalar_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler_scalar);
         }
-        // setup hanging nodes and Dirichlet constraints
-        {
-            TimerOutput::Scope t(computing_timer, "Setup: constraints");
-            constraints_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
-            scalar_constraints.reinit(locally_owned_scalar_dofs, locally_relevant_scalar_dofs);
-            DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
-
-            pcout << "   Number of active cells: "
-                << triangulation.n_global_active_cells() << std::endl
-                << "   Number of degrees of freedom: " << dof_handler.n_dofs()
-                << std::endl;
-
-            compute_dirichlet_constraints();
-
-            all_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);
-            all_constraints.close();
-            scalar_constraints.close();
-
-            constraints_hanging_nodes.close();
-            constraints_dirichlet_and_hanging_nodes.close();
-        }
+        // // setup hanging nodes and Dirichlet constraints
+        // {
+        //     TimerOutput::Scope t(computing_timer, "Setup: constraints");
+        //     constraints_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
+        //     scalar_constraints.reinit(locally_owned_scalar_dofs, locally_relevant_scalar_dofs);
+        //     DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
+        //
+        //     pcout << "   Number of active cells: "
+        //         << triangulation.n_global_active_cells() << std::endl
+        //         << "   Number of degrees of freedom: " << dof_handler.n_dofs()
+        //         << std::endl;
+        //
+        //     compute_dirichlet_constraints();
+        //
+        //     all_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);
+        //     all_constraints.close();
+        //     scalar_constraints.close();
+        //
+        //     constraints_hanging_nodes.close();
+        //     constraints_dirichlet_and_hanging_nodes.close();
+        // }
         // Initialization of the vectors and the active set
         {
             TimerOutput::Scope t(computing_timer, "Setup: vectors");
@@ -1472,7 +1478,7 @@ namespace PlasticityModel
 
     // How this function works will probably have to be adjusted for the course
     template <int dim>
-    void PlasticityProblem<dim>::compute_dirichlet_constraints()
+    void PlasticityProblem<dim>::compute_dirichlet_constraints(const double displacement)
     {
         constraints_dirichlet_and_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
         constraints_dirichlet_and_hanging_nodes.merge(constraints_hanging_nodes);
@@ -1488,7 +1494,7 @@ namespace PlasticityModel
             // top face
             5,
             // EquationData::BoundaryValues<dim>(),
-            Functions::ConstantFunction<dim>(applied_displacement, dim),
+            Functions::ConstantFunction<dim>(displacement, dim),
             constraints_dirichlet_and_hanging_nodes,
             fe.component_mask(z_displacement));
 
@@ -1692,132 +1698,6 @@ namespace PlasticityModel
     }
 
 
-    // template <int dim>
-    // void PlasticityProblem<dim>::solve_newton()
-    // {
-    //     TrilinosWrappers::MPI::Vector old_solution(locally_owned_dofs, mpi_communicator);
-    //     TrilinosWrappers::MPI::Vector r(locally_owned_dofs, mpi_communicator);  // residual vector
-    //     TrilinosWrappers::MPI::Vector tmp_vector(locally_owned_dofs, mpi_communicator);
-    //     TrilinosWrappers::MPI::Vector locally_relevant_tmp_vector(locally_relevant_dofs, mpi_communicator);
-    //     TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs, mpi_communicator);
-    //
-    //     double residual_norm;
-    //
-    //     const double tolerance = 1e-6; // Convergence tolerance for the residual norm
-    //
-    //     double first_newton_increment_norm;
-    //
-    //     for (unsigned int newton_step = 0; newton_step <= 100; ++newton_step)
-    //     {
-    //         pcout << ' ' << std::endl;
-    //         pcout << "   Newton iteration " << newton_step << std::endl;
-    //
-    //         pcout << "      Assembling system... " << std::endl;
-    //         newton_matrix = 0.;
-    //         newton_rhs = 0.;
-    //
-    //         if (newton_step != 0)
-    //         {
-    //             for (unsigned int n = 0; n < dof_handler.n_dofs(); ++n)
-    //             {
-    //                 if (all_constraints.is_inhomogeneously_constrained(n))
-    //                 {
-    //                     all_constraints.set_inhomogeneity(n, 0);
-    //                 }
-    //             }
-    //         }
-    //
-    //         assemble_newton_system(solution);  // Assemble the Newton system with the current solution
-    //
-    //         TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
-    //
-    //         pcout << "      Solving system... " << std::endl;
-    //         solve_newton_system(newton_increment);  // Solve for the Newton increment
-    //
-    //         double previous_residual_norm = newton_rhs.l2_norm();
-    //
-    //         all_constraints.distribute(newton_increment);
-    //
-    //         // Line search algorithm
-    //         double alpha = 1.0;
-    //         const double beta = 0.5; // Reduction factor for alpha
-    //         const double sufficient_decrease = 0.9; // Factor for sufficient residual decrease
-    //         TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
-    //
-    //         while (true)
-    //         {
-    //             // Compute tentative solution
-    //             tmp_solution = solution;
-    //             tmp_solution.add(alpha, newton_increment);
-    //
-    //             // Assemble residual with tmp_solution
-    //             assemble_newton_system(tmp_solution, true); // Only assemble RHS (residual)
-    //
-    //             // Compute residual norm
-    //             r = newton_rhs;
-    //             const unsigned int start_res = r.local_range().first;
-    //             const unsigned int end_res = r.local_range().second;
-    //             for (unsigned int n = start_res; n < end_res; ++n)
-    //                 if (all_constraints.is_inhomogeneously_constrained(n))
-    //                     r(n) = 0.0;
-    //
-    //             r.compress(VectorOperation::insert);
-    //
-    //             residual_norm = r.l2_norm();
-    //
-    //             pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
-    //
-    //             if (residual_norm <= previous_residual_norm * sufficient_decrease)
-    //             {
-    //                 // Accept the step if residual is sufficiently decreased
-    //                 break;
-    //             }
-    //             else
-    //             {
-    //                 // Reduce alpha and try again
-    //                 alpha *= beta;
-    //                 if (alpha < 1e-6)
-    //                 {
-    //                     pcout << "      Line search failed to find acceptable alpha." << std::endl;
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //
-    //         // Update solution with the accepted alpha
-    //         solution = tmp_solution;
-    //
-    //         // Update previous residual norm
-    //         previous_residual_norm = residual_norm;
-    //
-    //         output_results(newton_step);
-    //
-    //         // Check for convergence using the norm of the Newton increment
-    //         if (newton_step == 0)
-    //         {
-    //             first_newton_increment_norm = newton_increment.l2_norm();
-    //
-    //             pcout << "      First Newton increment norm: " << first_newton_increment_norm << std::endl;
-    //
-    //             pcout << "      Residual norm: " << residual_norm << std::endl;
-    //         }
-    //         else
-    //         {
-    //             pcout << "      First Newton increment norm: " << first_newton_increment_norm << std::endl;
-    //
-    //             pcout << "      Current Newton increment norm: " << newton_increment.l2_norm() << std::endl;
-    //
-    //             pcout << "      Current increment norm / First increment norm: "  << newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
-    //
-    //             if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
-    //             {
-    //                 break;
-    //             }
-    //         }
-    //     }
-    // }
-
-
     template <int dim>
     void PlasticityProblem<dim>::solve_newton()
     {
@@ -1828,7 +1708,6 @@ namespace PlasticityModel
         TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs, mpi_communicator);
 
         double residual_norm;
-        double previous_residual_norm;
 
         const double tolerance = 1e-6; // Convergence tolerance for the residual norm
 
@@ -1838,6 +1717,9 @@ namespace PlasticityModel
         {
             pcout << ' ' << std::endl;
             pcout << "   Newton iteration " << newton_step << std::endl;
+
+            double previous_residual_norm = newton_rhs.l2_norm();
+            std::cout << "Previous residual norm: " << previous_residual_norm << std::endl;
 
             pcout << "      Assembling system... " << std::endl;
             newton_matrix = 0.;
@@ -1854,39 +1736,66 @@ namespace PlasticityModel
                 }
             }
 
-            assemble_newton_system(solution);  // guess of the displacement from step k (step ii, iii and first half iv in Box 4.2 of the textbook)
-                                               // 'solution' is the current guess of the solution
+            assemble_newton_system(solution);  // Assemble the Newton system with the current solution
 
             TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
 
+            // double previous_residual_norm = newton_rhs.l2_norm();
 
             pcout << "      Solving system... " << std::endl;
-            solve_newton_system(newton_increment);  // solve the linear system to find the Newton increment
-                                                       // second half of step iv in Box 4.2 of the textbook
+            solve_newton_system(newton_increment);  // Solve for the Newton increment
+
+            // double previous_residual_norm = newton_rhs.l2_norm();
 
             all_constraints.distribute(newton_increment);
 
-            // NOTE: Might want to implement line search algorithm
-            // the following is to damp the increment
-            if (newton_step != 0)
+            // Line search algorithm
+            double alpha = 1.0;
+            const double beta = 0.05; // Reduction factor for alpha
+            const double sufficient_decrease = 1.0; // Factor for sufficient residual decrease
+            TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
+
+            while (true)
             {
-                newton_increment *= 0.3;
+                // Compute tentative solution
+                tmp_solution = solution;
+                tmp_solution.add(alpha, newton_increment);
+
+                // Assemble residual with tmp_solution
+                assemble_newton_system(tmp_solution, true); // Only assemble RHS (residual)
+
+                r = newton_rhs;
+
+                residual_norm = r.l2_norm();
+
+                pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
+
+                if (residual_norm <= previous_residual_norm * sufficient_decrease || newton_step == 0)
+                {
+                    // Accept the step if residual is sufficiently decreased
+                    break;
+                }
+                else
+                {
+                    // Reduce alpha and try again
+                    alpha -= beta;
+                    if (alpha <= 0.1)
+                    {
+                        pcout << "      Line search failed to find acceptable alpha." << std::endl;
+                        break;
+                    }
+                }
             }
 
-            r = newton_rhs;
-            const unsigned int start_res = (r.local_range().first),
-                               end_res = (r.local_range().second);
-            for (unsigned int n = start_res; n < end_res; ++n)
-                if (all_constraints.is_inhomogeneously_constrained(n))
-                    r(n) = 0.0;
+            // Update solution with the accepted alpha
+            solution = tmp_solution;
 
-            r.compress(VectorOperation::insert);
+            // Update previous residual norm
+            previous_residual_norm = residual_norm;
 
-            residual_norm = r.l2_norm();
+            // output_results(newton_step);
 
-            output_results(newton_step);
-
-            // Step x: Check for convergence using the ratio of previous residual norm to current residual norm
+            // Check for convergence using the norm of the Newton increment
             if (newton_step == 0)
             {
                 first_newton_increment_norm = newton_increment.l2_norm();
@@ -1908,8 +1817,6 @@ namespace PlasticityModel
                     break;
                 }
             }
-
-            solution += newton_increment;
         }
     }
 
@@ -2073,32 +1980,80 @@ namespace PlasticityModel
     {
         computing_timer.reset();
 
-        unsigned int n_t_steps = 1;
+        make_grid();
+        setup_system();
+
+        constraints_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
+        scalar_constraints.reinit(locally_owned_scalar_dofs, locally_relevant_scalar_dofs);
+        DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
+
+        all_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);
+        all_constraints.close();
+        scalar_constraints.close();
+
+        constraints_hanging_nodes.close();
+        constraints_dirichlet_and_hanging_nodes.close();
+
+        output_results(0, "initial");
+
+        double displacement = 0;
+
+        double delta_displacement = 0;
+
+        bool reverse_loading = false;
+
+        unsigned int n_t_steps = 120;
+        const double delta_t = 2.0 / n_t_steps;
+        unsigned int t_step_tension = (2.0 / 5.0) * n_t_steps;
         for (unsigned int t_step = 0; t_step < n_t_steps; ++t_step)
         {
-            for (; current_refinement_cycle < /*n_refinement_cycles*/ 1; ++current_refinement_cycle)
+            std::cout << "Step: " << t_step << std::endl;
+
+            // delta_displacement = - displacement;
+
+            if (reverse_loading == false && displacement >= applied_displacement)
             {
-                TimerOutput::Scope t(computing_timer, "Setup");
-
-                pcout << std::endl;
-                pcout << "Cycle " << current_refinement_cycle << ':' << std::endl;
-
-                // initial grid setup
-                if (current_refinement_cycle == 0)
-                {
-                    make_grid();
-                    setup_system();
-
-                    output_results(0, "initial");
-                }
-                else
-                    // refine the grid if the current refinement cycle is not the first one
-                {
-                    TimerOutput::Scope t(computing_timer, "Setup: refine mesh");
-                    refine_grid();
-                }
+                reverse_loading = true;
             }
+
+            if (reverse_loading == false)
+            {
+                // displacement +=  t_step * delta_t * applied_displacement;
+                delta_displacement = delta_t * applied_displacement;
+            }
+            else
+            {
+                // displacement -= t_step * delta_t * applied_displacement;
+                delta_displacement = -delta_t * applied_displacement;
+            }
+
+            displacement += delta_displacement;
+
+            // setup hanging nodes and Dirichlet constraints
+            {
+                TimerOutput::Scope t(computing_timer, "Setup: constraints");
+                constraints_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
+                scalar_constraints.reinit(locally_owned_scalar_dofs, locally_relevant_scalar_dofs);
+                DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
+
+                pcout << "   Number of active cells: "
+                    << triangulation.n_global_active_cells() << std::endl
+                    << "   Number of degrees of freedom: " << dof_handler.n_dofs()
+                    << std::endl;
+
+                compute_dirichlet_constraints(delta_displacement);
+
+                all_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);
+                all_constraints.close();
+                scalar_constraints.close();
+
+                constraints_hanging_nodes.close();
+                constraints_dirichlet_and_hanging_nodes.close();
+            }
+
             solve_newton();
+
+            output_results(t_step);
         }
 
             computing_timer.print_summary();
