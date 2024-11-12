@@ -258,14 +258,13 @@ namespace PlasticityModel
         ConstitutiveLaw(const double sigma_0,                   // initial yield stress
                         const double hardening_slope,           // hardening slope (H in the textbook)
                         const double kappa,                     // bulk modulus (K in the textbook)
-                        const double mu,                        // shear modulus (G in the textbook)
-                        const double gamma_kin);                // kinematic hardening parameter
+                        const double mu);                       // shear modulus (G in the textbook)
 
         // The following function performs the return-mapping algorithm and determines the derivative of stress with
         // respect to strain based off of whether a one-vector or a two-vector return was used
         bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim>& elastic_strain_trial,
             std::shared_ptr<PointHistory<dim>> &qph,
-            std::string yield_criteria, std::string hardening_law) const;
+            std::string yield_criteria) const;
 
         SymmetricTensor<4, dim> derivative_of_isotropic_tensor(Tensor<1, dim> x, Tensor<2, dim> e,
             SymmetricTensor<2, dim>, SymmetricTensor<2, dim> Y, SymmetricTensor<2, dim> dy_dx) const;
@@ -285,8 +284,7 @@ namespace PlasticityModel
     ConstitutiveLaw<dim>::ConstitutiveLaw(const double sigma_0,
                                           const double hardening_slope,
                                           const double kappa,
-                                          const double mu,
-                                          const double gamma_kin)
+                                          const double mu)
     // initialize the member variables
     : sigma_0(sigma_0)
     , kappa(kappa)
@@ -361,16 +359,12 @@ namespace PlasticityModel
     }
 
 
-    // TODO: The Von_Mises yield criteria should still be added along with
-    //  both hardening behaviours (isotropic and kinematic) should for both yield criteria (Von Mises and Tresca)
     // The following function checks if it is plastic or elastic
     template <int dim>
     bool ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
         const SymmetricTensor<2, dim> &elastic_strain_trial,
         std::shared_ptr<PointHistory<dim>> &qph,
-        // NOTE: The following arguments are for when the kinematic hardening and Von Mises gets incorporated
-        std::string yield_criteria,
-        std::string hardening_law) const
+        std::string yield_criteria) const
     {
         Assert(dim == 3, ExcNotImplemented());
 
@@ -381,10 +375,6 @@ namespace PlasticityModel
         const double H = hardening_slope;
 
         double accumulated_plastic_strain_n;
-
-        // The following boolean variables will be used later for construction of the consistent tangent matrix
-        bool is_two_vector_return;
-        bool is_right_corner;
 
         // Elastic Predictor Step (Box 8.1, Step i) from the textbook
         auto elastic_strain_trial_eigenvector_pairs =
@@ -530,7 +520,7 @@ namespace PlasticityModel
             // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b) from the textbook
             if (s1 >= s2 && s2 >= s3)
             {
-                is_two_vector_return = false;
+                // one-vector return
 
                 // std::cout << "Plastic: one-vector return" << std::endl;
 
@@ -593,15 +583,14 @@ namespace PlasticityModel
                 return true;
             }
 
-            // std::cout << "Plastic: two-vector return" << std::endl;
+            // Two-vector return
 
-            is_two_vector_return = true;
+            // std::cout << "Plastic: two-vector return" << std::endl;
 
             if (deviatoric_stress_trial_eigenvalues[0] + deviatoric_stress_trial_eigenvalues[dim - 1] -
                 2.0 * deviatoric_stress_trial_eigenvalues[1] > 0.)
             {
                 // Right corner return
-                is_right_corner = true;
 
                 // computing ds/de for the two-vector right return
                 // This relates to equation 8.5.2 in the textbook
@@ -731,7 +720,6 @@ namespace PlasticityModel
             }
 
             // Left corner return
-            is_right_corner = false;
 
             // computing ds/de for the two-vector right return
             // This relates to equation 8.5.3 in the textbook
@@ -1224,7 +1212,7 @@ namespace PlasticityModel
         TrilinosWrappers::MPI::Vector accumulated_plastic_strain_vector;
 
 
-        const double sigma_0, hardening_slope, kappa, mu, gamma_kin;
+        const double sigma_0, hardening_slope, kappa, mu;
         ConstitutiveLaw<dim> constitutive_law;
 
         const std::string base_mesh;
@@ -1248,7 +1236,7 @@ namespace PlasticityModel
 
         const bool transfer_solution;
         std::string output_dir;
-        const unsigned int n_refinement_cycles;
+        const unsigned int n_time_steps;
         unsigned int current_step;
     };
 
@@ -1275,10 +1263,10 @@ namespace PlasticityModel
             "global: one global refinement \n"
             "percentage: a fixed percentage of cells gets refined using Kelly error estimator.");
         prm.declare_entry(
-            "number of cycles",
+            "number of time-steps",
             "5",
             Patterns::Integer(),
-            "Number of adaptive mesh refinement cycles.");
+            "Number of psuedo time-steps.");
         prm.declare_entry(
             "output directory",
             "",
@@ -1308,13 +1296,7 @@ namespace PlasticityModel
             "yield-criteria",
             "Von-Mises",
             Patterns::Selection("Von-Mises|Tresca"),
-            "Select the yield-criteria: 'Von-Mises' or 'Tresca'.");
-        // The following parameter is for the hardening-law
-        prm.declare_entry(
-            "hardening-law",
-            "isotropic",
-            Patterns::Selection("isotropic|kinematic"),
-            "Select the hardening-law: 'isotropic' or 'kinematic'.");
+            "Select the yield-criteria: 'Von-Mises' or 'Tresca'.");;
     }
 
 
@@ -1338,19 +1320,17 @@ namespace PlasticityModel
           , hardening_slope(1550.0)
           , kappa(166670.0)
           , mu(76920.0)
-          , gamma_kin(0.01)
           , sigma_0(400.0)
-          , constitutive_law(sigma_0, hardening_slope, kappa, mu, gamma_kin)
+          , constitutive_law(sigma_0, hardening_slope, kappa, mu)
 
           , base_mesh(prm.get("base mesh"))
 
           , applied_displacement(prm.get_double("applied displacement"))
 
           , yield_criteria(prm.get("yield-criteria"))
-          , hardening_law(prm.get("hardening-law"))
 
           , transfer_solution(prm.get_bool("transfer solution"))
-          , n_refinement_cycles(prm.get_integer("number of cycles"))
+          , n_time_steps(prm.get_integer("number of time-steps"))
           , current_step(0)
 
     {
@@ -1603,7 +1583,7 @@ namespace PlasticityModel
                     // The following is step vii (for the current step) and step ii (for the next step) in Box 4.2 in
                     //  the textbook
                     constitutive_law.return_mapping_and_derivative_stress_strain(
-                    strain_tensor[q_point], qph, yield_criteria, hardening_law);
+                    strain_tensor[q_point], qph, yield_criteria);
 
                     SymmetricTensor<2, dim> stress_tensor = qph->get_stress();
 
@@ -2106,14 +2086,12 @@ namespace PlasticityModel
 
         bool reverse_loading = false;
 
-        unsigned int n_t_steps = 120;
+        unsigned int n_t_steps = n_time_steps;
         const double delta_t = 1.0 / n_t_steps;
-        unsigned int t_step_tension = (2.0 / 5.0) * n_t_steps;
+
         for (unsigned int t_step = 0; t_step < n_t_steps; ++t_step)
         {
             std::cout << "Step: " << t_step << std::endl;
-
-            // delta_displacement = - displacement;
 
             if (reverse_loading == false && displacement >= applied_displacement)
             {
@@ -2122,16 +2100,12 @@ namespace PlasticityModel
 
             if (reverse_loading == false)
             {
-                // displacement +=  t_step * delta_t * applied_displacement;
-                delta_displacement = delta_t * applied_displacement;
+                displacement +=  t_step * delta_t * applied_displacement;
             }
             else
             {
-                // displacement -= t_step * delta_t * applied_displacement;
-                delta_displacement = -delta_t * applied_displacement;
+                displacement -= t_step * delta_t * applied_displacement;
             }
-
-            // delta_displacement += displacement;
 
             // setup hanging nodes and Dirichlet constraints
             {

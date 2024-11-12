@@ -1,8 +1,7 @@
 set polynomial degree             = 1
 set number of initial refinements = 1
-set number of cycles              = 1
+set number of time-steps          = 80
 set refinement strategy           = global
 set output directory              = Von_Mises
-set applied displacement          = 1
+set applied displacement          = 0.01
 set yield-criteria                = Von-Mises
-set hardening-law                 = isotropic
