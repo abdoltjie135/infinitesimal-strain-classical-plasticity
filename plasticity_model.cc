@@ -1374,28 +1374,6 @@ namespace PlasticityModel
             locally_relevant_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler);
             locally_relevant_scalar_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler_scalar);
         }
-        // // setup hanging nodes and Dirichlet constraints
-        // {
-        //     TimerOutput::Scope t(computing_timer, "Setup: constraints");
-        //     constraints_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
-        //     scalar_constraints.reinit(locally_owned_scalar_dofs, locally_relevant_scalar_dofs);
-        //     DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
-        //
-        //     pcout << "   Number of active cells: "
-        //         << triangulation.n_global_active_cells() << std::endl
-        //         << "   Number of degrees of freedom: " << dof_handler.n_dofs()
-        //         << std::endl;
-        //
-        //     compute_dirichlet_constraints();
-        //
-        //     all_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);
-        //     all_constraints.close();
-        //     scalar_constraints.close();
-        //
-        //     constraints_hanging_nodes.close();
-        //     constraints_dirichlet_and_hanging_nodes.close();
-        // }
-        // Initialization of the vectors and the active set
         {
             TimerOutput::Scope t(computing_timer, "Setup: vectors");
             solution.reinit(locally_relevant_dofs, mpi_communicator);
@@ -1407,7 +1385,6 @@ namespace PlasticityModel
             stress_tensor_off_diagonal.reinit(locally_owned_dofs, mpi_communicator);
             stress_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
         }
-        // Initialize the matrix structures that will be used in the simulation
         {
             TimerOutput::Scope t(computing_timer, "Setup: matrix");
             TrilinosWrappers::SparsityPattern sp(locally_owned_dofs,
@@ -1422,6 +1399,7 @@ namespace PlasticityModel
             sp.compress();
             newton_matrix.reinit(sp);
         }
+
         // Initialize the quadrature formula
         const QGauss<dim> quadrature_formula(fe_degree + 1);
 
@@ -1456,65 +1434,65 @@ namespace PlasticityModel
 
         // Uniaxial displacement
 
-        // VectorTools::interpolate_boundary_values(
-        //     dof_handler,
-        //     // top face
-        //     5,
-        //     // EquationData::BoundaryValues<dim>(),
-        //     Functions::ConstantFunction<dim>(displacement, dim),
-        //     constraints_dirichlet_and_hanging_nodes,
-        //     fe.component_mask(z_displacement));
-        //
-        // VectorTools::interpolate_boundary_values(
-        //     dof_handler,
-        //     // bottom face
-        //     4,
-        //     Functions::ZeroFunction<dim>(dim),
-        //     constraints_dirichlet_and_hanging_nodes,
-        //     fe.component_mask(z_displacement));
-        //
-        // VectorTools::interpolate_boundary_values(
-        //     dof_handler,
-        //     // left face
-        //     0,
-        //     Functions::ZeroFunction<dim>(dim),
-        //     constraints_dirichlet_and_hanging_nodes,
-        //     fe.component_mask(x_displacement));
-        //
-        // if (dim == 3)  // the front and back faces only exist in 3D
-        // {
-        //     VectorTools::interpolate_boundary_values(
-        //         dof_handler,
-        //         // back face
-        //         2,
-        //         Functions::ZeroFunction<dim>(dim),
-        //         constraints_dirichlet_and_hanging_nodes,
-        //         fe.component_mask(y_displacement));
-        // }
-
-        // Simple shear
-
         VectorTools::interpolate_boundary_values(
             dof_handler,
+            // top face
             5,
             // EquationData::BoundaryValues<dim>(),
             Functions::ConstantFunction<dim>(displacement, dim),
             constraints_dirichlet_and_hanging_nodes,
-            fe.component_mask(x_displacement));
+            fe.component_mask(z_displacement));
 
         VectorTools::interpolate_boundary_values(
             dof_handler,
+            // bottom face
             4,
             Functions::ZeroFunction<dim>(dim),
             constraints_dirichlet_and_hanging_nodes,
-            (fe.component_mask(x_displacement) | fe.component_mask(z_displacement)));
+            fe.component_mask(z_displacement));
 
         VectorTools::interpolate_boundary_values(
             dof_handler,
-            2,
+            // left face
+            0,
             Functions::ZeroFunction<dim>(dim),
             constraints_dirichlet_and_hanging_nodes,
-            fe.component_mask(y_displacement));
+            fe.component_mask(x_displacement));
+
+        if (dim == 3)  // the front and back faces only exist in 3D
+        {
+            VectorTools::interpolate_boundary_values(
+                dof_handler,
+                // back face
+                2,
+                Functions::ZeroFunction<dim>(dim),
+                constraints_dirichlet_and_hanging_nodes,
+                fe.component_mask(y_displacement));
+        }
+
+        // Simple shear
+
+        // VectorTools::interpolate_boundary_values(
+        //     dof_handler,
+        //     5,
+        //     // EquationData::BoundaryValues<dim>(),
+        //     Functions::ConstantFunction<dim>(displacement, dim),
+        //     constraints_dirichlet_and_hanging_nodes,
+        //     fe.component_mask(x_displacement));
+        //
+        // VectorTools::interpolate_boundary_values(
+        //     dof_handler,
+        //     4,
+        //     Functions::ZeroFunction<dim>(dim),
+        //     constraints_dirichlet_and_hanging_nodes,
+        //     (fe.component_mask(x_displacement) | fe.component_mask(z_displacement)));
+        //
+        // VectorTools::interpolate_boundary_values(
+        //     dof_handler,
+        //     2,
+        //     Functions::ZeroFunction<dim>(dim),
+        //     constraints_dirichlet_and_hanging_nodes,
+        //     fe.component_mask(y_displacement));
     }
 
 
@@ -1673,7 +1651,7 @@ namespace PlasticityModel
 
         double residual_norm;
 
-        const double tolerance = 1e-6; // Convergence tolerance for the residual norm
+        const double tolerance = 1e-5; // Convergence tolerance for the residual norm
 
         double first_newton_increment_norm;
 
@@ -1683,7 +1661,7 @@ namespace PlasticityModel
             pcout << "   Newton iteration " << newton_step << std::endl;
 
             double previous_residual_norm = newton_rhs.l2_norm();
-            std::cout << "Previous residual norm: " << previous_residual_norm << std::endl;
+            std::cout << "      Previous residual norm: " << previous_residual_norm << std::endl;
 
             pcout << "      Assembling system... " << std::endl;
             newton_matrix = 0.;
@@ -1765,8 +1743,6 @@ namespace PlasticityModel
                 first_newton_increment_norm = newton_increment.l2_norm();
 
                 pcout << "      First Newton increment norm: " << first_newton_increment_norm << std::endl;
-
-                pcout << "      Residual norm: " << residual_norm << std::endl;
             }
             else
             {
@@ -1774,10 +1750,11 @@ namespace PlasticityModel
 
                 pcout << "      Current Newton increment norm: " << newton_increment.l2_norm() << std::endl;
 
-                pcout << "      Current increment norm / First increment norm: "  << newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
+                pcout << "      Current increment norm / First increment norm: "  <<
+                    newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
 
-                if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
-                // if (std::abs(residual_norm < tolerance))
+                // if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
+                if (std::abs(residual_norm < tolerance))
                 {
                     break;
                 }
@@ -1867,6 +1844,7 @@ namespace PlasticityModel
     {
         TimerOutput::Scope t(computing_timer, "Graphical output");
         pcout << "      Writing graphical output... " << std::flush;
+        pcout << std::endl;
 
         // Move mesh
         move_mesh(solution);
@@ -1967,7 +1945,7 @@ namespace PlasticityModel
         bool reverse_loading = false;
 
         unsigned int n_t_steps = n_time_steps;
-        const double delta_t = 2.0 / n_t_steps;
+        const double delta_t = 3.0 / n_t_steps;
 
         for (unsigned int t_step = 0; t_step < n_t_steps; ++t_step)
         {

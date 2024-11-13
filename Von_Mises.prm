@@ -1,7 +1,6 @@
 set polynomial degree             = 1
 set number of initial refinements = 1
-set number of time-steps          = 120
-set refinement strategy           = global
+set number of time-steps          = 180
+set refinement strategy           = percentage
 set output directory              = Von_Mises
 set applied displacement          = 0.01
-set yield-criteria                = Von-Mises
