@@ -136,10 +136,9 @@ namespace PlasticityModel
 
         // setting the initial value of the consistent tangent operator to the elastic consistent tangent operator
         consistent_tangent_operator = 2.0 * shear_modulus *
-                                      (identity_tensor<dim>() - 1.0 / 3.0 *
-                                                                outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
-                                      bulk_modulus * outer_product(unit_symmetric_tensor<dim>(),
-                                                                   unit_symmetric_tensor<dim>());
+                (identity_tensor<dim>() - 1.0 / 3.0 * outer_product(unit_symmetric_tensor<dim>(),
+                        unit_symmetric_tensor<dim>())) + bulk_modulus * outer_product(unit_symmetric_tensor<dim>(),
+                                unit_symmetric_tensor<dim>());
 
         stored_is_plastic = false;
     }
@@ -471,8 +470,9 @@ namespace PlasticityModel
                 //  therefore be careful where you make the reconstruction.
                 stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
-                SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
-                                                                                       stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
+                SymmetricTensor<2, dim> stress_n1_reconstructed =
+                        reconstruct_tensor({{stress_n1[0][0],stress_n1[1][1], stress_n1[2][2]}},
+                                           elastic_strain_trial_eigenvectors_matrix);
 
                 qph->set_stress(stress_n1_reconstructed);
                 qph->set_elastic_strain(elastic_strain_n1);
@@ -598,7 +598,7 @@ namespace PlasticityModel
             // std::cout << "Plastic: two-vector return" << std::endl;
 
             if (deviatoric_stress_trial_eigenvalues[0] + deviatoric_stress_trial_eigenvalues[dim - 1] -
-                2.0 * deviatoric_stress_trial_eigenvalues[1] > 0.0)
+                2.0 * deviatoric_stress_trial_eigenvalues[1] > 0)
             {
                 // Right corner return
 
@@ -611,15 +611,15 @@ namespace PlasticityModel
 
                 double det_d = daa * dbb - dab * dba;
 
-                ds_de[0][0] = 2.0 * G * (1.0 - (8.0 * pow(G, 2.0)) / det_d);
+                ds_de[0][0] = 2.0 * G * (1.0 - ((8.0 * pow(G, 2.0)) / det_d));
                 ds_de[0][1] = ((4.0 * pow(G, 2.0)) / det_d) * (dab - daa);
-                ds_de[0][2] = (4.0 * pow(G, 2.0) / det_d) * (dba - dbb);
+                ds_de[0][2] = ((4.0 * pow(G, 2.0)) / det_d) * (dba - dbb);
                 ds_de[1][0] = (8.0 * pow(G, 3.0)) / det_d;
-                ds_de[1][1] = 2.0 * G * (1.0 + (2.0 * G * daa) / det_d);
+                ds_de[1][1] = 2.0 * G * (1.0 + ((2.0 * G * daa) / det_d));
                 ds_de[1][2] = -(4.0 * pow(G, 2.0) / det_d) * dba;
                 ds_de[2][0] = (8.0 * pow(G, 3.0)) / det_d;
                 ds_de[2][1] = -(4.0 * pow(G, 2.0) / det_d) * dab;
-                ds_de[2][2] = 2.0 * G * (1.0 + (2.0 * G * dbb) / det_d);
+                ds_de[2][2] = 2.0 * G * (1.0 + ((2.0 * G * dbb) / det_d));
 
                 // Equation 8.46 from textbook
                 for (unsigned int i = 0; i < 3; ++i) // Iterate over i (curly brackets after this for loop are not needed)
@@ -636,8 +636,8 @@ namespace PlasticityModel
                     }
 
                 Vector<double> delta_gamma_vector(2);
-                delta_gamma_vector[0] = 0.0;
-                delta_gamma_vector[1] = 0.0;
+//                delta_gamma_vector[0] = 0.0;
+//                delta_gamma_vector[1] = 0.0;
 
                 double s_b = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[1];
                 double s_a = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[2];
@@ -653,6 +653,12 @@ namespace PlasticityModel
 
                 double delta_gamma_sum;
 
+                FullMatrix<double> d_matrix(2, 2);
+                d_matrix(0, 0) = -4.0 * G - H;
+                d_matrix(0, 1) = -2.0 * G - H;
+                d_matrix(1, 0) = -2.0 * G - H;
+                d_matrix(1, 1) = -4.0 * G - H;
+
                 // Newton iteration for two-vector return (Box 8.3, Step ii) from the textbook
                 for (unsigned int iteration = 0; iteration < 50; ++iteration)
                 {
@@ -661,12 +667,6 @@ namespace PlasticityModel
 
                     // TODO: The hardening slope is constant for linear isotropic hardening
                     //  this will need to be made general for general isotropic hardening later
-
-                    FullMatrix<double> d_matrix(2, 2);
-                    d_matrix(0, 0) = -4.0 * G - H;
-                    d_matrix(0, 1) = -2.0 * G - H;
-                    d_matrix(1, 0) = -2.0 * G - H;
-                    d_matrix(1, 1) = -4.0 * G - H;
 
                     FullMatrix<double> d_matrix_inverse(2, 2);
                     d_matrix_inverse.invert(d_matrix);
@@ -677,14 +677,13 @@ namespace PlasticityModel
                     delta_gamma_vector += delta_gamma_vector_update;
 
                     residual_vector[0] = s_a - 2.0 * G * (2.0 * delta_gamma_vector[0] + delta_gamma_vector[1]) -
-                                         yield_stress(sigma_0, H, accumulated_plastic_strain_n1);
+                                         yield_stress(yield_stress_0, H, accumulated_plastic_strain_n1);
                     residual_vector[1] = s_b - 2.0 * G * (delta_gamma_vector[0] + 2 * delta_gamma_vector[1]) -
-                                         yield_stress(sigma_0, H, accumulated_plastic_strain_n1);
+                                         yield_stress(yield_stress_0, H, accumulated_plastic_strain_n1);
 
                     if (abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance)
                     {
-                        s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * (delta_gamma_vector[0] +
-                                                                                 delta_gamma_vector[1]);
+                        s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * (delta_gamma_vector[0] + delta_gamma_vector[1]);
                         s2 = deviatoric_stress_trial_eigenvalues[1] + 2.0 * G * delta_gamma_vector[1];
                         s3 = deviatoric_stress_trial_eigenvalues[2] + 2.0 * G * delta_gamma_vector[0];
 
@@ -709,22 +708,26 @@ namespace PlasticityModel
                 //  therefore be careful where you make the reconstruction.
                 stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
-                SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
-                                                                                       stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
+                SymmetricTensor<2, dim> stress_n1_reconstructed =
+                        reconstruct_tensor({{stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]}},
+                                           elastic_strain_trial_eigenvectors_matrix);
 
                 // NOTE: The elastic strain has be reconstructed back to the original co-ordinate system before storing
                 //  I assumed that th eigenvectors of the eigenvectors of the deviatoric part of the stress is the same
                 //  as the full stress tensor
                 elastic_strain_n1 = 1.0 / (2.0 * G) *
-                                    reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix) +
-                                    (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
+                                    reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}},
+                                                       elastic_strain_trial_eigenvectors_matrix) +
+                                                       (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
                 qph->set_stress(stress_n1_reconstructed);
                 qph->set_elastic_strain(elastic_strain_n1);
                 qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
 
                 consistent_tangent_operator = derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
-                                                                             elastic_strain_trial_eigenvectors_matrix, elastic_strain_trial, stress_n1, dsigma_de);
+                                                                             elastic_strain_trial_eigenvectors_matrix,
+                                                                             elastic_strain_trial, stress_n1,
+                                                                             dsigma_de);
 
                 qph->set_consistent_tangent_operator(consistent_tangent_operator);
 
@@ -742,15 +745,15 @@ namespace PlasticityModel
 
             double det_d = daa * dbb - dab * dba;
 
-            ds_de[0][0] = 2.0 * G * (1.0 + (2.0 * G * dbb) / det_d);
+            ds_de[0][0] = 2.0 * G * (1.0 + ((2.0 * G * dbb) / det_d));
             ds_de[0][1] = -(4.0 * pow(G, 2.0) / det_d) * dab;
             ds_de[0][2] = (8.0 * pow(G, 3.0)) / det_d;
             ds_de[1][0] = -(4.0 * pow(G, 2.0) / det_d) * dba;
-            ds_de[1][1] = 2.0 * G * (1.0 + (2.0 * G * daa) / det_d);
+            ds_de[1][1] = 2.0 * G * (1.0 + ((2.0 * G * daa) / det_d));
             ds_de[1][2] = (8.0 * pow(G, 3.0)) / det_d;
             ds_de[2][0] = (4.0 * pow(G, 2.0) / det_d) * (dba - dbb);
             ds_de[2][1] = (4.0 * pow(G, 2.0) / det_d) * (dab - daa);
-            ds_de[2][2] = 2.0 * G * (1.0 - (8.0 * pow(G, 2.0)) / det_d);
+            ds_de[2][2] = 2.0 * G * (1.0 - ((8.0 * pow(G, 2.0)) / det_d));
 
             // Equation 8.46 from textbook
             for (unsigned int i = 0; i < 3; ++i) // Iterate over i (curly brackets after this for loop are not needed)
@@ -786,6 +789,10 @@ namespace PlasticityModel
             double delta_gamma_sum;
 
             FullMatrix<double> d_matrix(2, 2);
+            d_matrix(0, 0) = -4.0 * G - H;
+            d_matrix(0, 1) = -2.0 * G - H;
+            d_matrix(1, 0) = -2.0 * G - H;
+            d_matrix(1, 1) = -4.0 * G - H;
 
             FullMatrix<double> d_matrix_inverse(2, 2);
 
@@ -797,11 +804,6 @@ namespace PlasticityModel
 
                 // TODO: The hardening slope is constant for linear isotropic hardening
                 //  this will need to be made general for general isotropic hardening later
-
-                d_matrix(0, 0) = -4.0 * G - H;
-                d_matrix(0, 1) = -2.0 * G - H;
-                d_matrix(1, 0) = -2.0 * G - H;
-                d_matrix(1, 1) = -4.0 * G - H;
 
                 d_matrix_inverse.invert(d_matrix);
 
@@ -843,8 +845,9 @@ namespace PlasticityModel
             //  therefore be careful where you make the reconstruction.
             stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
-            SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
-                                                                                   stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
+            SymmetricTensor<2, dim> stress_n1_reconstructed =
+                    reconstruct_tensor({{stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]}},
+                                       elastic_strain_trial_eigenvectors_matrix);
 
             // NOTE: The elastic strain has be reconstructed back to the original co-ordinate system before storing
             //  I assumed that th eigenvectors of the eigenvectors of the deviatoric part of the stress is the same
@@ -1858,8 +1861,8 @@ namespace PlasticityModel
                 pcout << "      Current increment norm / First increment norm: "  <<
                       newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
 
-                // if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
-                if (std::abs(residual_norm < tolerance))
+                if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
+                // if (std::abs(residual_norm) < tolerance)
                 {
                     break;
                 }
