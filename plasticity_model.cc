@@ -136,10 +136,10 @@ namespace PlasticityModel
 
         // setting the initial value of the consistent tangent operator to the elastic consistent tangent operator
         consistent_tangent_operator = 2.0 * shear_modulus *
-            (identity_tensor<dim>() - 1.0 / 3.0 *
-                outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
-                    bulk_modulus * outer_product(unit_symmetric_tensor<dim>(),
-                        unit_symmetric_tensor<dim>());
+                                      (identity_tensor<dim>() - 1.0 / 3.0 *
+                                                                outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
+                                      bulk_modulus * outer_product(unit_symmetric_tensor<dim>(),
+                                                                   unit_symmetric_tensor<dim>());
 
         stored_is_plastic = false;
     }
@@ -283,11 +283,11 @@ namespace PlasticityModel
         // The following function performs the return-mapping algorithm and determines the derivative of stress with
         // respect to strain based off of whether a one-vector or a two-vector return was used
         bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim> &delta_strain,
-            std::shared_ptr<PointHistory<dim>> &qph,
-            std::string yield_criteria) const;
+                                                         std::shared_ptr<PointHistory<dim>> &qph,
+                                                         std::string yield_criteria) const;
 
         SymmetricTensor<4, dim> derivative_of_isotropic_tensor(Tensor<1, dim> x, Tensor<2, dim> e,
-            SymmetricTensor<2, dim>, SymmetricTensor<2, dim> Y, SymmetricTensor<2, dim> dy_dx) const;
+                                                               SymmetricTensor<2, dim>, SymmetricTensor<2, dim> Y, SymmetricTensor<2, dim> dy_dx) const;
 
     private:
         const double sigma_0;
@@ -304,10 +304,10 @@ namespace PlasticityModel
                                           const double kappa,
                                           const double mu)
     // initialize the member variables
-    : sigma_0(sigma_0)
-    , kappa(kappa)
-    , mu(mu)
-    , hardening_slope(hardening_slope)
+            : sigma_0(sigma_0)
+            , kappa(kappa)
+            , mu(mu)
+            , hardening_slope(hardening_slope)
     {} // constructor body is empty because all the work is done in the initializer list
 
 
@@ -359,7 +359,7 @@ namespace PlasticityModel
 
     template <int dim>
     SymmetricTensor<2, dim> reconstruct_tensor(const std::array<double, dim> &principal_values,
-                                      const Tensor<2, dim> &eigenvectors_tensor)
+                                               const Tensor<2, dim> &eigenvectors_tensor)
     {
         Tensor<2, dim> principal_values_tensor;
         for (unsigned int i = 0; i < dim; ++i)
@@ -380,10 +380,10 @@ namespace PlasticityModel
     // The following function checks if it is plastic or elastic
     template <int dim>
     bool ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
-        const SymmetricTensor<2, dim> &delta_strain,
-        std::shared_ptr<PointHistory<dim>> &qph,
-        // NOTE: The following arguments are for when the kinematic hardening and Von Mises gets incorporated
-        std::string yield_criteria) const
+            const SymmetricTensor<2, dim> &delta_strain,
+            std::shared_ptr<PointHistory<dim>> &qph,
+            // NOTE: The following arguments are for when the kinematic hardening and Von Mises gets incorporated
+            std::string yield_criteria) const
     {
         Assert(dim == 3, ExcNotImplemented());
 
@@ -400,7 +400,7 @@ namespace PlasticityModel
 
         // Elastic Predictor Step (Box 8.1, Step i) from the textbook
         auto elastic_strain_trial_eigenvector_pairs =
-            compute_principal_values_vectors(elastic_strain_trial);
+                compute_principal_values_vectors(elastic_strain_trial);
         auto elastic_strain_trial_eigenvalues = elastic_strain_trial_eigenvector_pairs.first;
         auto elastic_strain_trial_eigenvectors_matrix = elastic_strain_trial_eigenvector_pairs.second;
 
@@ -410,7 +410,7 @@ namespace PlasticityModel
 
         double accumulated_plastic_strain_trial = accumulated_plastic_strain_n;  // ε_p_n+1^trial
         SymmetricTensor<2, dim> deviatoric_stress_trial = 2.0 * G *              // deviatoric stress trial
-            deviator(elastic_strain_trial);
+                                                          deviator(elastic_strain_trial);
         double e_v_trial = trace(elastic_strain_trial);                          // volumetric part of the trial elastic strain
         double p_trial = K * e_v_trial;
 
@@ -443,7 +443,7 @@ namespace PlasticityModel
             // NOTE: I think this yield function should have the absolute value to incorporate compressive stresses
             // Plastic admissibility check (Box 8.1, Step iii) from the textbook
             double phi = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[dim - 1]
-            - yield_stress(yield_stress_0, H, accumulated_plastic_strain_trial);
+                         - yield_stress(yield_stress_0, H, accumulated_plastic_strain_trial);
 
             if (phi <= 0)
             {
@@ -472,15 +472,15 @@ namespace PlasticityModel
                 stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
                 SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
-                    stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
+                                                                                       stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
 
                 qph->set_stress(stress_n1_reconstructed);
                 qph->set_elastic_strain(elastic_strain_n1);
                 qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
 
                 consistent_tangent_operator = 2.0 * G * (identity_tensor<dim>() -
-                    1.0 / 3.0 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
-                        K * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+                                                         1.0 / 3.0 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
+                                              K * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
 
                 qph->set_consistent_tangent_operator(consistent_tangent_operator);
 
@@ -492,7 +492,7 @@ namespace PlasticityModel
             // Plastic step: Return Mapping (Box 8.1, Step iv) from the textbook
 
             double residual = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[dim - 1] -
-               yield_stress(yield_stress_0, H, accumulated_plastic_strain_n);
+                              yield_stress(yield_stress_0, H, accumulated_plastic_strain_n);
 
             // Initially say it is going to be a two-vector return
             bool local_newton_converged_one_v = false;
@@ -509,8 +509,8 @@ namespace PlasticityModel
 
                 // Compute the residual (Box 8.2, Step ii)
                 residual = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[dim - 1] -
-                    4.0 * G * delta_gamma -
-                        yield_stress(yield_stress_0, H, accumulated_plastic_strain_n + delta_gamma);
+                           4.0 * G * delta_gamma -
+                           yield_stress(yield_stress_0, H, accumulated_plastic_strain_n + delta_gamma);
 
                 if (std::abs(residual) <= tolerance)
                 {
@@ -529,7 +529,7 @@ namespace PlasticityModel
 
             // Checking if the Newton iteration converged
             AssertThrow(local_newton_converged_one_v,
-                ExcMessage("Newton iteration did not converge for one-vector return"));
+                        ExcMessage("Newton iteration did not converge for one-vector return"));
 
             // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b) from the textbook
             if (s1 >= s2 && s2 >= s3)
@@ -574,21 +574,21 @@ namespace PlasticityModel
                 stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
                 SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
-                    stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
+                                                                                       stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
 
                 // NOTE: The elastic strain has be reconstructed back to the original co-ordinate system before storing
                 //  I assumed that th eigenvectors of the eigenvectors of the deviatoric part of the stress is the same
                 //  as the full stress tensor
                 elastic_strain_n1 = 1.0 / (2.0 * G) *
-                    reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}},
-                        elastic_strain_trial_eigenvectors_matrix) + (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
+                                    reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}},
+                                                       elastic_strain_trial_eigenvectors_matrix) + (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
                 qph->set_stress(stress_n1_reconstructed);
                 qph->set_elastic_strain(elastic_strain_n1);
                 qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
 
                 consistent_tangent_operator = derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
-                    elastic_strain_trial_eigenvectors_matrix, elastic_strain_trial, stress_n1, dsigma_de);
+                                                                             elastic_strain_trial_eigenvectors_matrix, elastic_strain_trial, stress_n1, dsigma_de);
 
                 qph->set_consistent_tangent_operator(consistent_tangent_operator);
 
@@ -645,9 +645,9 @@ namespace PlasticityModel
                 // NOTE: The function for the yield stress will look different for nonlinear isotropic hardening
                 Vector<double> residual_vector(2);
                 residual_vector[0] = s_a - yield_stress(yield_stress_0, H,
-                    accumulated_plastic_strain_n);
+                                                        accumulated_plastic_strain_n);
                 residual_vector[1] = s_b - yield_stress(yield_stress_0, H,
-                    accumulated_plastic_strain_n);
+                                                        accumulated_plastic_strain_n);
 
                 Vector<double> delta_gamma_vector_update(2);
 
@@ -677,14 +677,14 @@ namespace PlasticityModel
                     delta_gamma_vector += delta_gamma_vector_update;
 
                     residual_vector[0] = s_a - 2.0 * G * (2.0 * delta_gamma_vector[0] + delta_gamma_vector[1]) -
-                        yield_stress(sigma_0, H, accumulated_plastic_strain_n1);
+                                         yield_stress(sigma_0, H, accumulated_plastic_strain_n1);
                     residual_vector[1] = s_b - 2.0 * G * (delta_gamma_vector[0] + 2 * delta_gamma_vector[1]) -
-                        yield_stress(sigma_0, H, accumulated_plastic_strain_n1);
+                                         yield_stress(sigma_0, H, accumulated_plastic_strain_n1);
 
                     if (abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance)
                     {
                         s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * (delta_gamma_vector[0] +
-                            delta_gamma_vector[1]);
+                                                                                 delta_gamma_vector[1]);
                         s2 = deviatoric_stress_trial_eigenvalues[1] + 2.0 * G * delta_gamma_vector[1];
                         s3 = deviatoric_stress_trial_eigenvalues[2] + 2.0 * G * delta_gamma_vector[0];
 
@@ -693,7 +693,7 @@ namespace PlasticityModel
                 }
 
                 AssertThrow(abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance,
-                    ExcMessage("Two-vector return did not converge"));
+                            ExcMessage("Two-vector return did not converge"));
 
                 qph->set_principal_stresses({s1, s2, s3});
 
@@ -710,21 +710,21 @@ namespace PlasticityModel
                 stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
                 SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
-                    stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
+                                                                                       stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
 
                 // NOTE: The elastic strain has be reconstructed back to the original co-ordinate system before storing
                 //  I assumed that th eigenvectors of the eigenvectors of the deviatoric part of the stress is the same
                 //  as the full stress tensor
                 elastic_strain_n1 = 1.0 / (2.0 * G) *
-                    reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix) +
-                    (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
+                                    reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix) +
+                                    (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
                 qph->set_stress(stress_n1_reconstructed);
                 qph->set_elastic_strain(elastic_strain_n1);
                 qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
 
                 consistent_tangent_operator = derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
-                    elastic_strain_trial_eigenvectors_matrix, elastic_strain_trial, stress_n1, dsigma_de);
+                                                                             elastic_strain_trial_eigenvectors_matrix, elastic_strain_trial, stress_n1, dsigma_de);
 
                 qph->set_consistent_tangent_operator(consistent_tangent_operator);
 
@@ -777,9 +777,9 @@ namespace PlasticityModel
             // NOTE: The function for the yield stress will look different for nonlinear isotropic hardening
             Vector<double> residual_vector(2);
             residual_vector[0] = s_a - yield_stress(yield_stress_0, H,
-                accumulated_plastic_strain_n);
+                                                    accumulated_plastic_strain_n);
             residual_vector[1] = s_b - yield_stress(yield_stress_0, H,
-                accumulated_plastic_strain_n);
+                                                    accumulated_plastic_strain_n);
 
             Vector<double> delta_gamma_vector_update(2);
 
@@ -811,23 +811,23 @@ namespace PlasticityModel
                 delta_gamma_vector += delta_gamma_vector_update;
 
                 residual_vector[0] = s_a - 2.0 * G * (2.0 * delta_gamma_vector[0] + delta_gamma_vector[1]) -
-                    (yield_stress_0 + H * accumulated_plastic_strain_n1);
+                                     (yield_stress_0 + H * accumulated_plastic_strain_n1);
                 residual_vector[1] = s_b - 2.0 * G * (2.0 * delta_gamma_vector[1] + delta_gamma_vector[0]) -
-                    (yield_stress_0 + H * accumulated_plastic_strain_n1);
+                                     (yield_stress_0 + H * accumulated_plastic_strain_n1);
 
                 if (abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance)
                 {
                     s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * delta_gamma_vector[0];
                     s2 = deviatoric_stress_trial_eigenvalues[1] - 2.0 * G * delta_gamma_vector[1];
                     s3 = deviatoric_stress_trial_eigenvalues[2] + 2.0 * G * (delta_gamma_vector[0] +
-                        delta_gamma_vector[1]);
+                                                                             delta_gamma_vector[1]);
 
                     break;
                 }
             }
 
             AssertThrow(abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance,
-                ExcMessage("Two-vector return did not converge"));
+                        ExcMessage("Two-vector return did not converge"));
 
             qph->set_principal_stresses({s1, s2, s3});
 
@@ -844,21 +844,21 @@ namespace PlasticityModel
             stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
             SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
-                stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
+                                                                                   stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
 
             // NOTE: The elastic strain has be reconstructed back to the original co-ordinate system before storing
             //  I assumed that th eigenvectors of the eigenvectors of the deviatoric part of the stress is the same
             //  as the full stress tensor
             elastic_strain_n1 = 1.0 / (2.0 * G) *
-                reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix) +
-                (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
+                                reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix) +
+                                (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
             qph->set_stress(stress_n1_reconstructed);
             qph->set_elastic_strain(elastic_strain_n1);
             qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
 
             consistent_tangent_operator = derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
-                    elastic_strain_trial_eigenvectors_matrix, elastic_strain_trial, stress_n1, dsigma_de);
+                                                                         elastic_strain_trial_eigenvectors_matrix, elastic_strain_trial, stress_n1, dsigma_de);
 
             qph->set_consistent_tangent_operator(consistent_tangent_operator);
 
@@ -866,12 +866,10 @@ namespace PlasticityModel
         }
         if (yield_criteria == "Von-Mises")
         {
-            q_trial = sqrt((3.0 / 2.0) * scalar_product(deviatoric_stress_trial, deviatoric_stress_trial)); // q_n+1^trial
+            // q_n+1^trial
+            q_trial = sqrt((3.0 / 2.0) * scalar_product(deviatoric_stress_trial, deviatoric_stress_trial));
 
-            // std::cout << "Trial q: " << q_trial << std::endl;
-            // std::cout << "Yield stress: " << yield_stress(yield_stress_0, H, accumulated_plastic_strain_n) << std::endl;
-
-            if (q_trial - yield_stress(yield_stress_0, H, accumulated_plastic_strain_trial) <= 0.0)
+            if (q_trial - yield_stress(yield_stress_0, H, accumulated_plastic_strain_trial) <= 0)
             {
                 // std::cout << "Elastic step" << std::endl;
 
@@ -892,8 +890,9 @@ namespace PlasticityModel
 
                 stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
-                SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
-                stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
+                SymmetricTensor<2, dim> stress_n1_reconstructed =
+                        reconstruct_tensor({{stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]}},
+                                           elastic_strain_trial_eigenvectors_matrix);
 
                 qph->set_principal_stresses({s1, s2, s3});
                 qph->set_stress(stress_n1_reconstructed);
@@ -901,8 +900,8 @@ namespace PlasticityModel
                 qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
 
                 consistent_tangent_operator = 2.0 * G * (identity_tensor<dim>() -
-                    1.0 / 3.0 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
-                        K * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+                        (1.0 / 3.0) * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
+                                              K * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
 
                 qph->set_consistent_tangent_operator(consistent_tangent_operator);
                 qph->set_is_plastic(false);
@@ -922,7 +921,7 @@ namespace PlasticityModel
                 delta_gamma -= residual / residual_derivative;  // new guess for delta_gamma
 
                 residual = q_trial - 3.0 * G * delta_gamma -
-                    yield_stress(yield_stress_0, H, accumulated_plastic_strain_n + delta_gamma);
+                           yield_stress(yield_stress_0, H, accumulated_plastic_strain_n + delta_gamma);
 
                 if (std::abs(residual) < tolerance)
                 {
@@ -931,7 +930,7 @@ namespace PlasticityModel
             }
 
             AssertThrow(std::abs(residual) < tolerance,
-            ExcMessage("Newton iteration did not converge for Von-Mises yield criteria"));
+                        ExcMessage("Newton iteration did not converge for Von-Mises yield criteria"));
 
             // Elastic step therefore setting values at n+1 to trial values
             // accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
@@ -951,14 +950,14 @@ namespace PlasticityModel
             stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
 
             SymmetricTensor<2, dim> stress_n1_reconstructed = reconstruct_tensor({{stress_n1[0][0],
-                stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
+                                                                                   stress_n1[1][1], stress_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix);
 
             // NOTE: I am not sure if the elastic strain needs to be reconstructed back to the original co-ordinate system
             //  If it needs to be reconstructed then I am not sure how this should be done because I am not sure which
             //  eigenvectors to use for the reconstruction
-            elastic_strain_n1 = 1.0 / (2.0 * G) *
-                reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix) +
-                (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
+            elastic_strain_n1 = (1.0 / (2.0 * G)) *
+                                reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}}, elastic_strain_trial_eigenvectors_matrix) +
+                                (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
             // elastic_strain_n1 = (1.0 / 2.0 * G) * s_n1 + (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
@@ -970,9 +969,9 @@ namespace PlasticityModel
             SymmetricTensor<2, dim> N_n1 = deviatoric_stress_trial / deviatoric_stress_trial.norm();
 
             consistent_tangent_operator = 2.0 * G * (1.0 - (delta_gamma * 3.0 * G) / q_trial) * (identity_tensor<dim>() -
-                1.0 / 3.0 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
-                    6.0 * G * G * (delta_gamma / q_trial - 1.0 / (3.0 * G + H)) * outer_product(N_n1, N_n1) +
-                        K * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+                    (1.0 / 3.0) * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) +
+                                          6.0 * G * G * (delta_gamma / q_trial - (1.0 / (3.0 * G + H))) * outer_product(N_n1, N_n1) +
+                                          K * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
 
             // NOTE: I am not sure if the consistent tangent operator needs to be transformed back to th original co-ordinate
             //  system
@@ -990,8 +989,8 @@ namespace PlasticityModel
     // TODO: Check if the following function is correct
     template <int dim>
     SymmetricTensor<4, dim> ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
-        Tensor<1, dim> x, Tensor<2, dim> e, SymmetricTensor<2, dim> X, SymmetricTensor<2, dim> Y,
-        SymmetricTensor<2, dim> dy_dx) const
+            Tensor<1, dim> x, Tensor<2, dim> e, SymmetricTensor<2, dim> X, SymmetricTensor<2, dim> Y,
+            SymmetricTensor<2, dim> dy_dx) const
     {
         // For this model the following should be passed as the arguments of this function
         //   Y - stress at n+1 as a tensor
@@ -1027,10 +1026,10 @@ namespace PlasticityModel
 
                         // Apply the formula directly for the 4th-order tensor
                         dX2_dX[i][j][k][l] = 0.5 * (
-                            delta_ik * X[l][j] +
-                            delta_il * X[k][j] +
-                            delta_jl * X[i][k] +
-                            delta_kj * X[i][l] );
+                                delta_ik * X[l][j] +
+                                delta_il * X[k][j] +
+                                delta_jl * X[i][k] +
+                                delta_kj * X[i][l] );
                     }
                 }
             }
@@ -1072,8 +1071,8 @@ namespace PlasticityModel
                 E[c] = symmetrize(outer_product(e[c], e[c]));
 
                 D += (y[a] / ((x[a] - x[b]) * (x[a] - x[c]))) * (dX2_dX - (x[b] + x[c]) * identity_tensor<dim>() -
-                    ((x[a] - x[b]) + (x[a] - x[c])) * outer_product(E[a], E[a]) - (x[b] - x[c]) *
-                    (outer_product(E[b], E[b]) - outer_product(E[c], E[c])));
+                                                                 ((x[a] - x[b]) + (x[a] - x[c])) * outer_product(E[a], E[a]) - (x[b] - x[c]) *
+                                                                                                                               (outer_product(E[b], E[b]) - outer_product(E[c], E[c])));
             }
             for (unsigned int i = 0; i < dim; ++i)
             {
@@ -1108,29 +1107,29 @@ namespace PlasticityModel
                         (1.0 / (x[a] - x[c])) * (dy_dx[c][b] - dy_dx[c][c]);
 
             double s2 = 2.0 * x[c] * ((y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]))) +
-                       ((x[a] + x[c]) / (x[a] - x[c])) * (dy_dx[c][b] - dy_dx[c][c]);
+                        ((x[a] + x[c]) / (x[a] - x[c])) * (dy_dx[c][b] - dy_dx[c][c]);
 
             double s3 = 2.0 * ((y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]) * (x[a] - x[c]))) +
-                       (1.0 / ((x[a] - x[c]) * (x[a] - x[c]))) * (dy_dx[a][c] + dy_dx[c][a] - dy_dx[a][a] - dy_dx[c][c]);
+                        (1.0 / ((x[a] - x[c]) * (x[a] - x[c]))) * (dy_dx[a][c] + dy_dx[c][a] - dy_dx[a][a] - dy_dx[c][c]);
 
             double s4 = 2.0 * x[c] * (y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]) * (x[a] - x[c])) +
-                       (1.0 / (x[a] - x[c])) *
-                       (dy_dx[a][c] - dy_dx[c][b]) + (x[c] / ((x[a] - x[c]) * (x[a] - x[c]))) *
-                       (dy_dx[a][c] + dy_dx[c][a] - dy_dx[a][a] - dy_dx[c][c]);
+                        (1.0 / (x[a] - x[c])) *
+                        (dy_dx[a][c] - dy_dx[c][b]) + (x[c] / ((x[a] - x[c]) * (x[a] - x[c]))) *
+                                                      (dy_dx[a][c] + dy_dx[c][a] - dy_dx[a][a] - dy_dx[c][c]);
 
             double s5 = 2.0 * x[c] * ((y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]) * (x[a] - x[c]))) +
-                       (1.0 / (x[a] - x[c])) * (dy_dx[c][a] - dy_dx[c][b]) +
-                           (x[c] / ((x[a] - x[c]) * (x[a] - x[c]))) * (dy_dx[a][c] + dy_dx[c][a] - dy_dx[a][a] - dy_dx[c][c]);
+                        (1.0 / (x[a] - x[c])) * (dy_dx[c][a] - dy_dx[c][b]) +
+                        (x[c] / ((x[a] - x[c]) * (x[a] - x[c]))) * (dy_dx[a][c] + dy_dx[c][a] - dy_dx[a][a] - dy_dx[c][c]);
 
             double s6 = 2.0 * (x[c] * x[c]) * ((y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]) * (x[a] - x[c]))) +
-                       ((x[a] * x[c]) / ((x[a] - x[c]) * (x[a] - x[c]))) *
-                       (dy_dx[a][c] + dy_dx[c][a])  - ((x[c] * x[c]) / ((x[a] - x[c]) * (x[a] - x[c]))) *
-                       (dy_dx[a][a] + dy_dx[c][c]) - ((x[a] + x[c]) / (x[a] - x[c])) * dy_dx[c][b];
+                        ((x[a] * x[c]) / ((x[a] - x[c]) * (x[a] - x[c]))) *
+                        (dy_dx[a][c] + dy_dx[c][a])  - ((x[c] * x[c]) / ((x[a] - x[c]) * (x[a] - x[c]))) *
+                                                       (dy_dx[a][a] + dy_dx[c][c]) - ((x[a] + x[c]) / (x[a] - x[c])) * dy_dx[c][b];
 
             D = s1 * dX2_dX - s2 * identity_tensor<dim>() - s3 * outer_product(X, X) +
                 s4 * outer_product(X, unit_symmetric_tensor<dim>()) +
-                    s5 * outer_product(unit_symmetric_tensor<dim>(), X) -
-                    s6 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+                s5 * outer_product(unit_symmetric_tensor<dim>(), X) -
+                s6 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
         }
         else if (x[0] == x[1] && x[1] == x[2])
         {
@@ -1157,7 +1156,7 @@ namespace PlasticityModel
 
         template <int dim>
         BoundaryForce<dim>::BoundaryForce()  // constructor definition
-            : Function<dim>(dim)             // initializing the base class constructor with the dimension
+                : Function<dim>(dim)             // initializing the base class constructor with the dimension
         {}
 
         // The following function returns the value of the boundary force (value) at a given point which is zero
@@ -1182,19 +1181,21 @@ namespace PlasticityModel
     {
     public:
         PlasticityProblem(const ParameterHandler& prm);  // constructor which initializes an instance of the class
-                                                         // with the parameters in the prm object
+        // with the parameters in the prm object
+
+        const std::string loading;
 
         void run(); // function to run the simulation
 
         static void declare_parameters(ParameterHandler& prm);  // function to declare the parameters
 
     private:
-        void make_grid();
+        void make_grid(std::string mesh);
         void setup_system();
-        void compute_dirichlet_constraints(const double displacment);
+        void compute_dirichlet_constraints(const double displacment, std::string problem_type);
         // void assemble_newton_system(const TrilinosWrappers::MPI::Vector& delta_solution, const bool rhs_only = false);
         void assemble_newton_system(const TrilinosWrappers::MPI::Vector &solution, const TrilinosWrappers::MPI::Vector &old_solution,
-            const bool rhs_only = false);
+                                    const bool rhs_only = false);
         void solve_newton_system(TrilinosWrappers::MPI::Vector &newton_increment);
         void solve_newton();
         void refine_grid();
@@ -1209,7 +1210,7 @@ namespace PlasticityModel
 
         const unsigned int n_initial_global_refinements;
         parallel::distributed::Triangulation<dim> triangulation;  // distributing the mesh across multiple processors
-                                                                  // for parallel computing
+        // for parallel computing
 
         std::vector<std::shared_ptr<PointHistory<dim>>> quadrature_point_history;
 
@@ -1256,6 +1257,8 @@ namespace PlasticityModel
 
         const std::string base_mesh;
 
+        const std::string problem;
+
         const double applied_displacement;
 
         const std::string yield_criteria;
@@ -1284,92 +1287,103 @@ namespace PlasticityModel
     void PlasticityProblem<dim>::declare_parameters(ParameterHandler& prm)
     {
         prm.declare_entry(
-            "polynomial degree",
-            "1",
-            Patterns::Integer(), // specifies that this parameter has to be an integer
-            "Polynomial degree of the FE_Q finite element space, typically 1 or 2.");
+                "polynomial degree",
+                "1",
+                Patterns::Integer(), // specifies that this parameter has to be an integer
+                "Polynomial degree of the FE_Q finite element space, typically 1 or 2.");
         prm.declare_entry(
-            "number of initial refinements",
-            "2",
-            Patterns::Integer(),
-            "Number of initial global refinements steps before the first computation.");
+                "number of initial refinements",
+                "2",
+                Patterns::Integer(),
+                "Number of initial global refinements steps before the first computation.");
         prm.declare_entry(
-            "refinement strategy",
-            "percentage",
-            Patterns::Selection("global|percentage"), // this restricts the parameter to global or percentage
-            "Mesh refinement strategy: \n"
-            "global: one global refinement \n"
-            "percentage: a fixed percentage of cells gets refined using Kelly error estimator.");
+                "refinement strategy",
+                "percentage",
+                Patterns::Selection("global|percentage"), // this restricts the parameter to global or percentage
+                "Mesh refinement strategy: \n"
+                "global: one global refinement \n"
+                "percentage: a fixed percentage of cells gets refined using Kelly error estimator.");
         prm.declare_entry(
-            "number of time-steps",
-            "5",
-            Patterns::Integer(),
-            "Number of psuedo time-steps for the simulation.");
+                "number of time-steps",
+                "5",
+                Patterns::Integer(),
+                "Number of psuedo time-steps for the simulation.");
         prm.declare_entry(
-            "output directory",
-            "",
-            Patterns::Anything(),
-            "Directory for output files (graphical output and benchmark statistics. "
-            "If empty, use the current directory.");
+                "output directory",
+                "",
+                Patterns::Anything(),
+                "Directory for output files (graphical output and benchmark statistics. "
+                "If empty, use the current directory.");
         prm.declare_entry(
-            "transfer solution",
-            "false",
-            Patterns::Bool(),
-            "Whether the solution should be used as a starting guess for the next finer mesh."
-            "If false, then the iteration starts at zero on every mesh.");
-        // The following will be adjusted to include the deformable bodies as required by the course
+                "transfer solution",
+                "false",
+                Patterns::Bool(),
+                "Whether the solution should be used as a starting guess for the next finer mesh."
+                "If false, then the iteration starts at zero on every mesh.");
         prm.declare_entry(
-            "base mesh",
-            "box",
-            Patterns::Selection("box|half sphere"),
-            "Select the shape of the domain: 'box' or 'half sphere'.");
-        // The following will control the displacement applied to the top face of the box
+                "base mesh",
+                "box",
+                Patterns::Selection("box|cylinder"),
+                "Select the shape of the domain: 'box' or hollow 'cylinder'.");
         prm.declare_entry(
-            "applied displacement",
-            "-0.002",
-            Patterns::Double(),
-            "Applied displacement to the top of the box");
-        // The following parameter is for the yield-criteria
+                "problem",
+                "tensile",
+                Patterns::Selection("tensile|shear|torsion"),
+                "Select the problem type: uniaxial 'tension', simple 'shear', 'torsion' and tension of cylinder.");
         prm.declare_entry(
-            "yield-criteria",
-            "Von-Mises",
-            Patterns::Selection("Von-Mises|Tresca"),
-            "Select the yield-criteria: 'Von-Mises' or 'Tresca'.");
+                "loading",
+                "no reverse",
+                Patterns::Selection("reverse|no reverse"),
+                "Select the loading type: 'reverse' is for reversed loading and 'no reverse' is for one-directional loading.");
+        prm.declare_entry(
+                "applied displacement",
+                "-0.002",
+                Patterns::Double(),
+                "Applied displacement to the top of the box");
+        prm.declare_entry(
+                "yield-criteria",
+                "Von-Mises",
+                Patterns::Selection("Von-Mises|Tresca"),
+                "Select the yield-criteria: 'Von-Mises' or 'Tresca'.");
     }
 
 
     template <int dim>
     PlasticityProblem<dim>::PlasticityProblem(const ParameterHandler& prm)  // defining the constructor
-        : mpi_communicator(MPI_COMM_WORLD)
-          , pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
-          // the following initializes a timer to track computation times
-          , computing_timer(MPI_COMM_WORLD, pcout, TimerOutput::never, TimerOutput::wall_times)
+            : mpi_communicator(MPI_COMM_WORLD)
+            , pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+            // the following initializes a timer to track computation times
+            , computing_timer(MPI_COMM_WORLD, pcout, TimerOutput::never, TimerOutput::wall_times)
 
-          , n_initial_global_refinements(prm.get_integer("number of initial refinements"))
-          , triangulation(mpi_communicator)
-          , fe_degree(prm.get_integer("polynomial degree"))
-          , fe(FE_Q<dim>(QGaussLobatto<1>(fe_degree + 1)) ^ dim)
-          , fe_scalar(fe_degree)
-          // , fe_system(FE_Q<dim>(QGaussLobatto<1>(fe_degree + 1)) ^ (dim + 0.5 * dim * (dim + 1)))
-          , dof_handler(triangulation)
-          , dof_handler_scalar(triangulation)
-          // , dof_handler_system(triangulation)
+            , n_initial_global_refinements(prm.get_integer("number of initial refinements"))
+            , triangulation(mpi_communicator)
+            , fe_degree(prm.get_integer("polynomial degree"))
+            , fe(FE_Q<dim>(QGaussLobatto<1>(fe_degree + 1)) ^ dim)
+            , fe_scalar(fe_degree)
+            // , fe_system(FE_Q<dim>(QGaussLobatto<1>(fe_degree + 1)) ^ (dim + 0.5 * dim * (dim + 1)))
+            , dof_handler(triangulation)
+            , dof_handler_scalar(triangulation)
+            // , dof_handler_system(triangulation)
 
-          , hardening_slope(1550.0)
-          , kappa(166670.0)
-          , mu(76920.0)
-          , sigma_0(400.0)
-          , constitutive_law(sigma_0, hardening_slope, kappa, mu)
+            , hardening_slope(1550.0)
+            , kappa(166670.0)
+            , mu(76920.0)
+            , sigma_0(400.0)
+            , constitutive_law(sigma_0, hardening_slope, kappa, mu)
 
-          , base_mesh(prm.get("base mesh"))
+            , base_mesh(prm.get("base mesh"))
 
-          , applied_displacement(prm.get_double("applied displacement"))
+            , problem(prm.get("problem"))
 
-          , yield_criteria(prm.get("yield-criteria"))
+            , loading(prm.get("loading"))
 
-          , transfer_solution(prm.get_bool("transfer solution"))
-          , n_time_steps(prm.get_integer("number of time-steps"))
-          , current_step(0)
+            , applied_displacement(prm.get_double("applied displacement"))
+
+            , yield_criteria(prm.get("yield-criteria"))
+
+            , transfer_solution(prm.get_bool("transfer solution"))
+            , n_time_steps(prm.get_integer("number of time-steps"))
+            , current_step(0)
 
     {
         std::string strat = prm.get("refinement strategy");
@@ -1393,20 +1407,23 @@ namespace PlasticityModel
         pcout << "    Using output directory '" << output_dir << "'" << std::endl;
         pcout << "    FE degree " << fe_degree << std::endl;
         pcout << "    transfer solution " << (transfer_solution ? "true" : "false")
-            << std::endl;
+              << std::endl;
     }
 
 
     template <int dim>
-    void PlasticityProblem<dim>::make_grid()
+    void PlasticityProblem<dim>::make_grid(std::string mesh)
     {
-        // unit cube mesh
-        const Point<dim> p1(0., 0., 0.);
-        const Point<dim> p2(1.0, 1.0, 1.0);
+        if (mesh == "box")
+        {
+            // unit cube mesh
+            const Point<dim> p1(0., 0., 0.);
+            const Point<dim> p2(1.0, 1.0, 1.0);
 
-        GridGenerator::hyper_rectangle(triangulation, p1, p2, true);
+            GridGenerator::hyper_rectangle(triangulation, p1, p2, true);
 
-        triangulation.refine_global(n_initial_global_refinements);  // refine the mesh globally based on prm file
+            triangulation.refine_global(n_initial_global_refinements);  // refine the mesh globally based on prm file
+        }
     }
 
 
@@ -1448,7 +1465,7 @@ namespace PlasticityModel
                                             constraints_dirichlet_and_hanging_nodes,
                                             false,
                                             Utilities::MPI::this_mpi_process(
-                                                mpi_communicator));
+                                                    mpi_communicator));
             sp.compress();
             newton_matrix.reinit(sp);
         }
@@ -1476,7 +1493,7 @@ namespace PlasticityModel
 
     // How this function works will probably have to be adjusted for the course
     template <int dim>
-    void PlasticityProblem<dim>::compute_dirichlet_constraints(const double displacement)
+    void PlasticityProblem<dim>::compute_dirichlet_constraints(const double displacement, std::string problem_type)
     {
         constraints_dirichlet_and_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
         constraints_dirichlet_and_hanging_nodes.merge(constraints_hanging_nodes);
@@ -1485,87 +1502,100 @@ namespace PlasticityModel
         const FEValuesExtractors::Scalar y_displacement(1);
         const FEValuesExtractors::Scalar z_displacement(2);
 
-        // Uniaxial displacement
+        if (problem_type == "tensile")
+        {
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    // top face
+                    5,
+                    // EquationData::BoundaryValues<dim>(),
+                    Functions::ConstantFunction<dim>(displacement, dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(z_displacement));
 
-        // VectorTools::interpolate_boundary_values(
-        //     dof_handler,
-        //     // top face
-        //     5,
-        //     // EquationData::BoundaryValues<dim>(),
-        //     Functions::ConstantFunction<dim>(displacement, dim),
-        //     constraints_dirichlet_and_hanging_nodes,
-        //     fe.component_mask(z_displacement));
-        //
-        // VectorTools::interpolate_boundary_values(
-        //     dof_handler,
-        //     // bottom face
-        //     4,
-        //     Functions::ZeroFunction<dim>(dim),
-        //     constraints_dirichlet_and_hanging_nodes,
-        //     fe.component_mask(z_displacement));
-        //
-        // VectorTools::interpolate_boundary_values(
-        //     dof_handler,
-        //     // left face
-        //     0,
-        //     Functions::ZeroFunction<dim>(dim),
-        //     constraints_dirichlet_and_hanging_nodes,
-        //     fe.component_mask(x_displacement));
-        //
-        // if (dim == 3)  // the front and back faces only exist in 3D
-        // {
-        //     VectorTools::interpolate_boundary_values(
-        //         dof_handler,
-        //         // back face
-        //         2,
-        //         Functions::ZeroFunction<dim>(dim),
-        //         constraints_dirichlet_and_hanging_nodes,
-        //         fe.component_mask(y_displacement));
-        // }
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    // bottom face
+                    4,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(z_displacement));
 
-        // Simple shear
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    // left face
+                    0,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(x_displacement));
 
-        VectorTools::interpolate_boundary_values(
-            dof_handler,
-            5,
-            // EquationData::BoundaryValues<dim>(),
-            Functions::ConstantFunction<dim>(displacement, dim),
-            constraints_dirichlet_and_hanging_nodes,
-            fe.component_mask(x_displacement));
 
-        VectorTools::interpolate_boundary_values(
-            dof_handler,
-            5,
-            Functions::ZeroFunction<dim>(dim),
-            constraints_dirichlet_and_hanging_nodes,
-            (fe.component_mask(y_displacement) | fe.component_mask(z_displacement)));
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    // back face
+                    2,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(y_displacement));
+        }
+        if (problem_type == "shear")
+        {
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    5,
+                    // EquationData::BoundaryValues<dim>(),
+                    Functions::ConstantFunction<dim>(displacement, dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(x_displacement));
 
-        VectorTools::interpolate_boundary_values(
-            dof_handler,
-            4,
-            Functions::ZeroFunction<dim>(dim),
-            constraints_dirichlet_and_hanging_nodes,
-            (fe.component_mask(x_displacement) | fe.component_mask(z_displacement) | fe.component_mask(y_displacement)));
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    5,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    (fe.component_mask(y_displacement) | fe.component_mask(z_displacement)));
 
-        VectorTools::interpolate_boundary_values(
-            dof_handler,
-            2,
-            Functions::ZeroFunction<dim>(dim),
-            constraints_dirichlet_and_hanging_nodes,
-            fe.component_mask(y_displacement));
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    4,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    (fe.component_mask(x_displacement) | fe.component_mask(z_displacement) | fe.component_mask(y_displacement)));
 
-        VectorTools::interpolate_boundary_values(
-            dof_handler,
-            3,
-            Functions::ZeroFunction<dim>(dim),
-            constraints_dirichlet_and_hanging_nodes,
-            fe.component_mask(y_displacement));
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    2,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(y_displacement));
+
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    3,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(y_displacement));
+
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    0,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(z_displacement));
+
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    1,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(z_displacement));
+        }
     }
 
 
     template <int dim>
     void PlasticityProblem<dim>::assemble_newton_system(const TrilinosWrappers::MPI::Vector &solution,
-        const TrilinosWrappers::MPI::Vector &old_solution, const bool rhs_only)
+                                                        const TrilinosWrappers::MPI::Vector &old_solution, const bool rhs_only)
     {
         TimerOutput::Scope t(computing_timer, "Assembling");
 
@@ -1619,7 +1649,7 @@ namespace PlasticityModel
                     // The following is step vii (for the current step) and step ii (for the next step) in Box 4.2 in
                     //  the textbook
                     constitutive_law.return_mapping_and_derivative_stress_strain(solution_tensor[q_point] -
-                        old_solution_tensor[q_point], qph, yield_criteria);
+                                                                                 old_solution_tensor[q_point], qph, yield_criteria);
 
                     SymmetricTensor<2, dim> stress_tensor = qph->get_stress();
 
@@ -1632,21 +1662,21 @@ namespace PlasticityModel
                             {
                                 // the following is step iii in Box 4.2 in the textbook
                                 cell_matrix(i, j) += transpose(fe_values[displacement].symmetric_gradient(i, q_point)) *
-                                    D_i * fe_values[displacement].symmetric_gradient(j, q_point) *
-                                            fe_values.JxW(q_point);
+                                                     D_i * fe_values[displacement].symmetric_gradient(j, q_point) *
+                                                     fe_values.JxW(q_point);
                             }
                         }
                         // NOTE: This does not include the external force effects
                         //  the following is the negative of the internal force as seen in step iv in Box 4.2 in the textbook
                         // TODO: Add the external force effects to create the full residual
                         cell_rhs(i) -= transpose(fe_values[displacement].symmetric_gradient(i, q_point)) *
-                            stress_tensor * fe_values.JxW(q_point);
+                                       stress_tensor * fe_values.JxW(q_point);
                     }
                 }
 
                 cell->get_dof_indices(local_dof_indices);
                 all_constraints.distribute_local_to_global(cell_matrix, cell_rhs, local_dof_indices,
-                    newton_matrix, newton_rhs);
+                                                           newton_matrix, newton_rhs);
             }
 
             newton_matrix.compress(VectorOperation::add);
@@ -1726,7 +1756,7 @@ namespace PlasticityModel
 
         double residual_norm;
 
-        const double tolerance = 1e-4; // Convergence tolerance for the residual norm
+        const double tolerance = 1e-4; // Convergence tolerance for newton loop
 
         double first_newton_increment_norm;
 
@@ -1826,7 +1856,7 @@ namespace PlasticityModel
                 pcout << "      Current Newton increment norm: " << newton_increment.l2_norm() << std::endl;
 
                 pcout << "      Current increment norm / First increment norm: "  <<
-                    newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
+                      newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
 
                 // if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
                 if (std::abs(residual_norm < tolerance))
@@ -1845,7 +1875,7 @@ namespace PlasticityModel
         if (refinement_strategy == RefinementStrategy::refine_global)
         {
             for (typename Triangulation<dim>::active_cell_iterator cell =
-                     triangulation.begin_active();
+                    triangulation.begin_active();
                  cell != triangulation.end();
                  ++cell)
                 if (cell->is_locally_owned())
@@ -1855,20 +1885,20 @@ namespace PlasticityModel
         {
             Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
             KellyErrorEstimator<dim>::estimate(
-                dof_handler,
-                QGauss<dim - 1>(fe.degree + 2),
-                std::map<types::boundary_id, const Function<dim>*>(),
-                solution,
-                estimated_error_per_cell);
+                    dof_handler,
+                    QGauss<dim - 1>(fe.degree + 2),
+                    std::map<types::boundary_id, const Function<dim>*>(),
+                    solution,
+                    estimated_error_per_cell);
 
             parallel::distributed::GridRefinement::refine_and_coarsen_fixed_number(
-                triangulation, estimated_error_per_cell, 0.3, 0.03);
+                    triangulation, estimated_error_per_cell, 0.3, 0.03);
         }
 
         triangulation.prepare_coarsening_and_refinement();
 
         parallel::distributed::SolutionTransfer<dim, TrilinosWrappers::MPI::Vector>
-            solution_transfer(dof_handler);
+                solution_transfer(dof_handler);
         if (transfer_solution)
             solution_transfer.prepare_for_coarsening_and_refinement(solution);
 
@@ -1940,7 +1970,7 @@ namespace PlasticityModel
 
     template <int dim>
     void PlasticityProblem<dim>::output_results(const unsigned int current_time_step,
-        const std::string output_name)
+                                                const std::string output_name)
     {
         TimerOutput::Scope t(computing_timer, "Graphical output");
         pcout << "      Writing graphical output... " << std::flush;
@@ -1956,7 +1986,7 @@ namespace PlasticityModel
         MappingQ1<dim> mapping;
 
         const std::vector<DataComponentInterpretation::DataComponentInterpretation>
-            data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
+                data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
 
 
 
@@ -1966,35 +1996,35 @@ namespace PlasticityModel
         accumulated_plastic_strain_vector.reinit(locally_owned_scalar_dofs, mpi_communicator);
 
         VectorTools::project(mapping, dof_handler_scalar, scalar_constraints, quadrature_formula,
-                                     [&](const typename DoFHandler<dim>::active_cell_iterator &cell,
-                                         const unsigned int q_point) -> double
-                                     {
-                                         unsigned int local_index = cell->active_cell_index() *
-                                             quadrature_formula.size();
-                                         const std::shared_ptr<PointHistory<dim>> &lqph =
-                                             quadrature_point_history[local_index + q_point];
-                                         //const SymmetricTensor<2, dim> &T = lqph->get_a();
-                                         return lqph->get_accumulated_plastic_strain();
-                                         // return T[i][j];
-                                     },
-                                     accumulated_plastic_strain_vector);
+                             [&](const typename DoFHandler<dim>::active_cell_iterator &cell,
+                                 const unsigned int q_point) -> double
+                             {
+                                 unsigned int local_index = cell->active_cell_index() *
+                                                            quadrature_formula.size();
+                                 const std::shared_ptr<PointHistory<dim>> &lqph =
+                                         quadrature_point_history[local_index + q_point];
+                                 //const SymmetricTensor<2, dim> &T = lqph->get_a();
+                                 return lqph->get_accumulated_plastic_strain();
+                                 // return T[i][j];
+                             },
+                             accumulated_plastic_strain_vector);
         data_out.add_data_vector(dof_handler_scalar, accumulated_plastic_strain_vector, "plastic_strain");
 
         is_plastic_vector.reinit(locally_owned_scalar_dofs, mpi_communicator);
         VectorTools::project(mapping, dof_handler_scalar, scalar_constraints, quadrature_formula,
-                                     [&](const typename DoFHandler<dim>::active_cell_iterator &cell,
-                                         const unsigned int q_point) -> double
-                                     {
-                                         unsigned int local_index = cell->active_cell_index() *
-                                             quadrature_formula.size();
-                                         const std::shared_ptr<PointHistory<dim>> &lqph =
-                                             quadrature_point_history[local_index + q_point];
-                                         //const SymmetricTensor<2, dim> &T = lqph->get_a();
-                                         bool is_p = lqph->get_is_plastic();
+                             [&](const typename DoFHandler<dim>::active_cell_iterator &cell,
+                                 const unsigned int q_point) -> double
+                             {
+                                 unsigned int local_index = cell->active_cell_index() *
+                                                            quadrature_formula.size();
+                                 const std::shared_ptr<PointHistory<dim>> &lqph =
+                                         quadrature_point_history[local_index + q_point];
+                                 //const SymmetricTensor<2, dim> &T = lqph->get_a();
+                                 bool is_p = lqph->get_is_plastic();
 
-                                         return is_p? 1.0 : 0.0;
-                                     },
-                                     is_plastic_vector);
+                                 return is_p? 1.0 : 0.0;
+                             },
+                             is_plastic_vector);
         data_out.add_data_vector(dof_handler_scalar, is_plastic_vector, "plastic_indicator");
 
 
@@ -2009,9 +2039,9 @@ namespace PlasticityModel
                                          const unsigned int q_point) -> double
                                      {
                                          unsigned int local_index = cell->active_cell_index() *
-                                             quadrature_formula.size();
+                                                                    quadrature_formula.size();
                                          const std::shared_ptr<PointHistory<dim>> &lqph =
-                                             quadrature_point_history[local_index + q_point];
+                                                 quadrature_point_history[local_index + q_point];
                                          const SymmetricTensor<2, dim> &T = lqph->get_stress();
                                          return T[i][j];
                                      },
@@ -2026,7 +2056,7 @@ namespace PlasticityModel
         data_out.build_patches(mapping, fe_degree, DataOut<dim>::curved_inner_cells);  // this accomodates curved elements
 
         const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(output_dir,
-            output_name, current_time_step, mpi_communicator, 2);
+                                                                              output_name, current_time_step, mpi_communicator, 2);
         pcout << pvtu_filename << std::flush;
 
         // Move mesh back
@@ -2045,7 +2075,7 @@ namespace PlasticityModel
     {
         computing_timer.reset();
 
-        make_grid();
+        make_grid(base_mesh);
         setup_system();
 
         constraints_hanging_nodes.reinit(locally_owned_dofs, locally_relevant_dofs);
@@ -2069,11 +2099,19 @@ namespace PlasticityModel
         bool reverse_loading = false;
 
         unsigned int n_t_steps = n_time_steps;
-        // const double delta_t = 3.0 / n_t_steps;  // uncomment for reverse loading
-        const double delta_t = 1.0 / n_t_steps;
+
+        double delta_t;
+
+        if (loading == "reverse")
+        {
+            delta_t = 3.0 / n_t_steps;
+        }
+        else
+        {
+            delta_t = 1.0 / n_t_steps;
+        }
 
         for (unsigned int t_step = 0; t_step < n_t_steps; ++t_step)
-        //for (unsigned int t_step = 0; t_step < (n_t_steps / 3) + 5; ++t_step)
         {
             std::cout << std::endl;
 
@@ -2103,11 +2141,11 @@ namespace PlasticityModel
                 DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
 
                 pcout << "   Number of active cells: "
-                    << triangulation.n_global_active_cells() << std::endl
-                    << "   Number of degrees of freedom: " << dof_handler.n_dofs()
-                    << std::endl;
+                      << triangulation.n_global_active_cells() << std::endl
+                      << "   Number of degrees of freedom: " << dof_handler.n_dofs()
+                      << std::endl;
 
-                compute_dirichlet_constraints(delta_displacement);
+                compute_dirichlet_constraints(delta_displacement, problem);
 
                 all_constraints.copy_from(constraints_dirichlet_and_hanging_nodes);
                 all_constraints.close();
@@ -2126,13 +2164,13 @@ namespace PlasticityModel
             output_results(t_step + 1);
         }
 
-            computing_timer.print_summary();
-            computing_timer.reset();
+        computing_timer.print_summary();
+        computing_timer.reset();
 
-            Utilities::System::MemoryStats stats;
-            Utilities::System::get_memory_stats(stats);
-            pcout << "Peak virtual memory used, resident in kB: " << stats.VmSize
-                << ' ' << stats.VmRSS << std::endl;
+        Utilities::System::MemoryStats stats;
+        Utilities::System::get_memory_stats(stats);
+        pcout << "Peak virtual memory used, resident in kB: " << stats.VmSize
+              << ' ' << stats.VmRSS << std::endl;
     }
 }
 
@@ -2149,13 +2187,13 @@ int main(int argc, char* argv[])
         if (argc != 2)
         {
             std::cerr << "*** Call this program as <./plasticity_model (parameter_file_name).prm>"
-                << std::endl;
+                      << std::endl;
             return 1;
         }
 
         prm.parse_input(argv[1]);
         Utilities::MPI::MPI_InitFinalize mpi_initialization(
-            argc, argv, numbers::invalid_unsigned_int);
+                argc, argv, numbers::invalid_unsigned_int);
         {
             PlasticityProblem<3> problem(prm);
             problem.run();
@@ -2164,27 +2202,27 @@ int main(int argc, char* argv[])
     catch (std::exception& exc)
     {
         std::cerr << std::endl
-            << std::endl
-            << "----------------------------------------------------"
-            << std::endl;
+                  << std::endl
+                  << "----------------------------------------------------"
+                  << std::endl;
         std::cerr << "Exception on processing: " << std::endl
-            << exc.what() << std::endl
-            << "Aborting!" << std::endl
-            << "----------------------------------------------------"
-            << std::endl;
+                  << exc.what() << std::endl
+                  << "Aborting!" << std::endl
+                  << "----------------------------------------------------"
+                  << std::endl;
 
         return 1;
     }
     catch (...)
     {
         std::cerr << std::endl
-            << std::endl
-            << "----------------------------------------------------"
-            << std::endl;
+                  << std::endl
+                  << "----------------------------------------------------"
+                  << std::endl;
         std::cerr << "Unknown exception!" << std::endl
-            << "Aborting!" << std::endl
-            << "----------------------------------------------------"
-            << std::endl;
+                  << "Aborting!" << std::endl
+                  << "----------------------------------------------------"
+                  << std::endl;
         return 1;
     }
 
