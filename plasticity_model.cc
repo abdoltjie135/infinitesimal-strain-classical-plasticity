@@ -1152,7 +1152,7 @@ namespace PlasticityModel
         public:
             BoundaryForce();
 
-            virtual double value(const Point<dim>& p, const unsigned int component = 0) const override;
+            virtual double value(const Point<dim>& p, const unsigned int component) const override;
 
             virtual void vector_value(const Point<dim>& p, Vector<double>& values) const override;
         };
@@ -1164,9 +1164,12 @@ namespace PlasticityModel
 
         // The following function returns the value of the boundary force (value) at a given point which is zero
         template <int dim>
-        double BoundaryForce<dim>::value(const Point<dim>&, const unsigned int) const
+        double BoundaryForce<dim>::value(const Point<dim>&, const unsigned int component) const
         {
-            return 0.; // the boundary force is zero
+            if (component == 2) // z-direction
+                return 1.0; // applied traction value
+            else
+                return 0.0; // no traction in other directions
         }
 
         // The following function determines the vector value of the boundary force at a given point
@@ -1196,9 +1199,8 @@ namespace PlasticityModel
         void make_grid(std::string mesh);
         void setup_system();
         void compute_dirichlet_constraints(const double displacment, std::string problem_type);
-        // void assemble_newton_system(const TrilinosWrappers::MPI::Vector& delta_solution, const bool rhs_only = false);
-        void assemble_newton_system(const TrilinosWrappers::MPI::Vector &solution, const TrilinosWrappers::MPI::Vector &old_solution,
-                                    const bool rhs_only = false);
+        void assemble_newton_system(const TrilinosWrappers::MPI::Vector &solution,
+                                    const TrilinosWrappers::MPI::Vector &old_solution, const bool rhs_only = false);
         void solve_newton_system(TrilinosWrappers::MPI::Vector &newton_increment);
         void solve_newton();
         void refine_grid();
@@ -1424,9 +1426,28 @@ namespace PlasticityModel
             const Point<dim> p2(1.0, 1.0, 1.0);
 
             GridGenerator::hyper_rectangle(triangulation, p1, p2, true);
-
-            triangulation.refine_global(n_initial_global_refinements);  // refine the mesh globally based on prm file
         }
+        else
+        {
+            // Parameters for the hollow cylinder
+            const double length = 1.0;               // Height of the cylinder
+            const double inner_radius = 0.48;        // Inner radius of the cylinder
+            const double outer_radius = 0.5;         // Outer radius of the cylinder
+            const unsigned int n_radial_cells = 3;   // Number of radial cells
+            const unsigned int n_axial_cells = 5;    // Number of axial cells
+            const bool colorize = true;              // Assign boundary IDs
+
+            // Generate the hollow cylinder mesh
+            GridGenerator::cylinder_shell(
+                    triangulation,
+                    length,
+                    inner_radius,
+                    outer_radius,
+                    n_radial_cells,
+                    n_axial_cells,
+                    colorize);
+        }
+        triangulation.refine_global(n_initial_global_refinements);  // refine the mesh globally based on prm file
     }
 
 
@@ -1546,7 +1567,6 @@ namespace PlasticityModel
             VectorTools::interpolate_boundary_values(
                     dof_handler,
                     5,
-                    // EquationData::BoundaryValues<dim>(),
                     Functions::ConstantFunction<dim>(displacement, dim),
                     constraints_dirichlet_and_hanging_nodes,
                     fe.component_mask(x_displacement));
@@ -1590,6 +1610,22 @@ namespace PlasticityModel
                     dof_handler,
                     1,
                     Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(z_displacement));
+        }
+        else
+        {
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    2,
+                    Functions::ZeroFunction<dim>(dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    (fe.component_mask(x_displacement) | fe.component_mask(z_displacement) | fe.component_mask(y_displacement)));
+
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    3,
+                    Functions::ConstantFunction<dim>(displacement, dim),
                     constraints_dirichlet_and_hanging_nodes,
                     fe.component_mask(z_displacement));
         }
@@ -1652,7 +1688,8 @@ namespace PlasticityModel
                     // The following is step vii (for the current step) and step ii (for the next step) in Box 4.2 in
                     //  the textbook
                     constitutive_law.return_mapping_and_derivative_stress_strain(solution_tensor[q_point] -
-                                                                                 old_solution_tensor[q_point], qph, yield_criteria);
+                                                                                old_solution_tensor[q_point], qph,
+                                                                                yield_criteria);
 
                     SymmetricTensor<2, dim> stress_tensor = qph->get_stress();
 
