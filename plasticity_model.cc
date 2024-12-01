@@ -83,6 +83,7 @@ namespace PlasticityModel
         void set_stress(const SymmetricTensor<2, dim> &stress);
         void set_elastic_strain(const SymmetricTensor<2, dim> &elastic_strain);
         void set_plastic_strain(const SymmetricTensor<2, dim> &plastic_strain);
+        void set_strain(const SymmetricTensor<2, dim> &plastic_strain);
         void set_back_stress(const SymmetricTensor<2, dim> &back_stress);
         void set_consistent_tangent_operator(const SymmetricTensor<4, dim> &consistent_tangent_operator);
         void set_principal_stresses(const std::vector<double> &principal_stresses);
@@ -94,6 +95,7 @@ namespace PlasticityModel
         SymmetricTensor<2, dim> get_stress() const;
         SymmetricTensor<2, dim> get_elastic_strain() const;
         SymmetricTensor<2, dim> get_plastic_strain() const;
+        SymmetricTensor<2, dim> get_strain() const;
         SymmetricTensor<2, dim> get_back_stress() const;
         SymmetricTensor<4, dim> get_consistent_tangent_operator() const;
         std::vector<double> get_principal_stresses() const;
@@ -111,6 +113,7 @@ namespace PlasticityModel
         SymmetricTensor<2, dim> stress;
         SymmetricTensor<2, dim> elastic_strain;
         SymmetricTensor<2, dim> plastic_strain;
+        SymmetricTensor<2, dim> strain;
         SymmetricTensor<2, dim> back_stress;
         SymmetricTensor<4, dim> consistent_tangent_operator;
         std::vector<double> principal_stresses;
@@ -120,6 +123,7 @@ namespace PlasticityModel
         SymmetricTensor<2, dim> stored_stress;
         SymmetricTensor<2, dim> stored_elastic_strain;
         SymmetricTensor<2, dim> stored_plastic_strain;
+        SymmetricTensor<2, dim> stored_strain;
         SymmetricTensor<2, dim> stored_back_stress;
         SymmetricTensor<4, dim> stored_consistent_tangent_operator;
         std::vector<double> stored_principal_stresses;
@@ -161,6 +165,12 @@ namespace PlasticityModel
     void PointHistory<dim>::set_plastic_strain(const SymmetricTensor<2, dim> &plastic_strain)
     {
         this->plastic_strain = plastic_strain;
+    }
+
+    template <int dim>
+    void PointHistory<dim>::set_strain(const SymmetricTensor<2, dim> &strain)
+    {
+        this->plastic_strain = strain;
     }
 
     template <int dim>
@@ -214,6 +224,12 @@ namespace PlasticityModel
     }
 
     template<int dim>
+    SymmetricTensor<2, dim> PointHistory<dim>::get_strain() const
+    {
+        return plastic_strain;
+    }
+
+    template<int dim>
     SymmetricTensor<2, dim> PointHistory<dim>::get_back_stress() const
     {
         return back_stress;
@@ -249,6 +265,7 @@ namespace PlasticityModel
         stored_stress = stress;
         stored_elastic_strain = elastic_strain;
         stored_plastic_strain = plastic_strain;
+        stored_strain = strain;
         stored_back_stress = back_stress;
         stored_consistent_tangent_operator = consistent_tangent_operator;
         stored_principal_stresses = principal_stresses;
@@ -1253,6 +1270,7 @@ namespace PlasticityModel
         TrilinosWrappers::MPI::Vector stress_tensor_diagonal;
         TrilinosWrappers::MPI::Vector stress_tensor_off_diagonal;
         TrilinosWrappers::MPI::Vector stress_tensor_tmp;
+        TrilinosWrappers::MPI::Vector strain_tensor_tmp;
         TrilinosWrappers::MPI::Vector accumulated_plastic_strain_vector;
         TrilinosWrappers::MPI::Vector is_plastic_vector;
 
@@ -1478,6 +1496,7 @@ namespace PlasticityModel
             stress_tensor_diagonal.reinit(locally_owned_dofs, mpi_communicator);
             stress_tensor_off_diagonal.reinit(locally_owned_dofs, mpi_communicator);
             stress_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
+            strain_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
         }
         {
             TimerOutput::Scope t(computing_timer, "Setup: matrix");
@@ -1662,17 +1681,11 @@ namespace PlasticityModel
                 cell_matrix = 0.;
                 cell_rhs = 0.;
 
-                // Get strains at each quadrature point
-                // fe_values[displacement].get_function_symmetric_gradients(delta_solution, delta_strain_tensor);
-                // linearization_point is the solution vector from the previous iteration
-
                 std::vector<SymmetricTensor<2, dim>> solution_tensor(n_q_points);
                 std::vector<SymmetricTensor<2, dim>> old_solution_tensor(n_q_points);
 
                 fe_values[displacement].get_function_symmetric_gradients(solution, solution_tensor);
                 fe_values[displacement].get_function_symmetric_gradients(old_solution, old_solution_tensor);
-
-                // SymmetricTensor<2, dim> delta_strain_tensor = solution_tensor - old_solution_tensor[0];
 
                 // Retrieve the quadrature point history for this cell
                 unsigned int cell_index = cell->active_cell_index() * n_q_points;
@@ -1690,6 +1703,7 @@ namespace PlasticityModel
                     constitutive_law.return_mapping_and_derivative_stress_strain(solution_tensor[q_point] -
                                                                                 old_solution_tensor[q_point], qph,
                                                                                 yield_criteria);
+                    qph->set_strain(solution_tensor[q_point]);
 
                     SymmetricTensor<2, dim> stress_tensor = qph->get_stress();
 
@@ -2028,13 +2042,33 @@ namespace PlasticityModel
         const std::vector<DataComponentInterpretation::DataComponentInterpretation>
                 data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
 
-
-
         data_out.add_data_vector(solution, std::vector<std::string>(dim, "displacement"),
                                  DataOut<dim>::type_dof_data, data_component_interpretation);
 
-        accumulated_plastic_strain_vector.reinit(locally_owned_scalar_dofs, mpi_communicator);
 
+        strain_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
+        for (int i = 0; i < dim; ++i)
+            for (int j = i; j < dim; ++j)
+            {
+                VectorTools::project(mapping, dof_handler_scalar, scalar_constraints, quadrature_formula,
+                                     [&](const typename DoFHandler<dim>::active_cell_iterator &cell,
+                                         const unsigned int q_point) -> double
+                                     {
+                                         unsigned int local_index = cell->active_cell_index() *
+                                                                    quadrature_formula.size();
+                                         const std::shared_ptr<PointHistory<dim>> &lqph =
+                                                 quadrature_point_history[local_index + q_point];
+                                         const SymmetricTensor<2, dim> &e = lqph->get_strain();
+                                         return e[i][j];
+                                     },
+                                     strain_tensor_tmp);
+
+                std::string name = "e_" + std::to_string(i) + std::to_string(j);
+                data_out.add_data_vector(dof_handler_scalar, strain_tensor_tmp, name);
+            }
+
+
+        accumulated_plastic_strain_vector.reinit(locally_owned_scalar_dofs, mpi_communicator);
         VectorTools::project(mapping, dof_handler_scalar, scalar_constraints, quadrature_formula,
                              [&](const typename DoFHandler<dim>::active_cell_iterator &cell,
                                  const unsigned int q_point) -> double
@@ -2043,12 +2077,11 @@ namespace PlasticityModel
                                                             quadrature_formula.size();
                                  const std::shared_ptr<PointHistory<dim>> &lqph =
                                          quadrature_point_history[local_index + q_point];
-                                 //const SymmetricTensor<2, dim> &T = lqph->get_a();
                                  return lqph->get_accumulated_plastic_strain();
-                                 // return T[i][j];
                              },
                              accumulated_plastic_strain_vector);
         data_out.add_data_vector(dof_handler_scalar, accumulated_plastic_strain_vector, "plastic_strain");
+
 
         is_plastic_vector.reinit(locally_owned_scalar_dofs, mpi_communicator);
         VectorTools::project(mapping, dof_handler_scalar, scalar_constraints, quadrature_formula,
@@ -2068,9 +2101,7 @@ namespace PlasticityModel
         data_out.add_data_vector(dof_handler_scalar, is_plastic_vector, "plastic_indicator");
 
 
-
         stress_tensor_tmp.reinit(locally_owned_scalar_dofs, mpi_communicator);
-
         for (int i = 0; i < dim; ++i)
             for (int j = i; j < dim; ++j)
             {
@@ -2095,8 +2126,10 @@ namespace PlasticityModel
         // data_out.build_patches();
         data_out.build_patches(mapping, fe_degree, DataOut<dim>::curved_inner_cells);  // this accomodates curved elements
 
-        const std::string pvtu_filename = data_out.write_vtu_with_pvtu_record(output_dir,
-                                                                              output_name, current_time_step, mpi_communicator, 2);
+        const std::string pvtu_filename =
+                data_out.write_vtu_with_pvtu_record(output_dir,
+                                                    output_name, current_time_step,
+                                                    mpi_communicator, 2);
         pcout << pvtu_filename << std::flush;
 
         // Move mesh back
