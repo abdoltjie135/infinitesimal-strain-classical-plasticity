@@ -3,8 +3,14 @@ set number of initial refinements = 1
 set number of time-steps          = 120
 set refinement strategy           = global
 set output directory              = Von_Mises
-set base mesh                     = box
-set problem                       = tensile
-set loading                       = reverse
+set base mesh                     = cylinder
+set problem                       = torsion
+set loading                       = no reverse
 set applied displacement          = 0.01
 set yield-criteria                = Von-Mises
+
+# the following parameters are for the 'torsion' problem
+set outer radius                  = 0.5
+set inner radius                  = 0.49
+set normal force                  = 10
+set torque                        = 10

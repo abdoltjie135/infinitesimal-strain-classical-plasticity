@@ -15,6 +15,7 @@
 #include <deal.II/base/index_set.h>
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/function.h>
+#include <deal.II/base/tensor_function.h>
 #include <deal.II/base/timer.h>
 
 #include <deal.II/lac/vector.h>
@@ -1163,39 +1164,53 @@ namespace PlasticityModel
 
     namespace EquationData
     {
-        template <int dim>
-        class BoundaryForce : public Function<dim>
-        {
+        template<int dim>
+        class BoundaryForce : public TensorFunction<1, dim, double>{
         public:
-            BoundaryForce();
+            // TODO: Add the correct logic for the time-stepping
+            BoundaryForce(std::string problem_type, double inner_radius, double outer_radius, double normal_force,
+                          double torque) : TensorFunction<1, dim, double>(), problem_type(problem_type), inner_radius(inner_radius),
+                          outer_radius(outer_radius), normal_force(normal_force), torque(torque){}
 
-            virtual double value(const Point<dim>& p, const unsigned int component) const override;
+            // TODO: When setup a torque for cylinder then the force is a function of the radius
+            //  this is dependant on the problem-type
+            virtual Tensor<1, dim> value(const Point<dim> &p) const override
+            {
+                Tensor<1, dim> traction;
 
-            virtual void vector_value(const Point<dim>& p, Vector<double>& values) const override;
+                if (problem_type == "torsion")
+                {
+                    const double J = (M_PI / 2.0) * (std::pow(outer_radius, 4) - std::pow(inner_radius, 4));
+
+                    traction[0] = (-torque * p[1]) / J;
+                    traction[1] = (torque * p[0]) / J;
+                    traction[2] = normal_force / (M_PI * (std::pow(outer_radius, 2) - std::pow(inner_radius, 2)));
+
+                    // NOTE: The following ensures that the axial stress and shear stress are equal
+//                    const double N = ((2 * std::sqrt(std::pow(p[0], 2) + std::pow(p[1], 2))) /
+//                            (std::pow(outer_radius, 2) + std::pow(inner_radius, 2))) * torque;
+//
+//                    traction[2] = N / (M_PI * (std::pow(outer_radius, 2) - std::pow(inner_radius, 2)));
+                }
+                else if (problem_type == "tensile")
+                {
+                    traction[2] = 412.305;
+                }
+                else if (problem_type == "shear")
+                {
+                    traction[0] = 234.531;
+                }
+
+                return traction;
+            }
+
+        private:
+            const std::string problem_type;
+            const double inner_radius;
+            const double outer_radius;
+            const double normal_force;
+            const double torque;
         };
-
-        template <int dim>
-        BoundaryForce<dim>::BoundaryForce()  // constructor definition
-                : Function<dim>(dim)             // initializing the base class constructor with the dimension
-        {}
-
-        // The following function returns the value of the boundary force (value) at a given point which is zero
-        template <int dim>
-        double BoundaryForce<dim>::value(const Point<dim>&, const unsigned int component) const
-        {
-            if (component == 2) // z-direction
-                return 1.0; // applied traction value
-            else
-                return 0.0; // no traction in other directions
-        }
-
-        // The following function determines the vector value of the boundary force at a given point
-        template <int dim>
-        void BoundaryForce<dim>::vector_value(const Point<dim>& p, Vector<double>& values) const
-        {
-            for (unsigned int c = 0; c < this->n_components; ++c)
-                values(c) = BoundaryForce<dim>::value(p, c);
-        }
     }
 
 
@@ -1217,9 +1232,10 @@ namespace PlasticityModel
         void setup_system();
         void compute_dirichlet_constraints(const double displacment, std::string problem_type);
         void assemble_newton_system(const TrilinosWrappers::MPI::Vector &solution,
-                                    const TrilinosWrappers::MPI::Vector &old_solution, const bool rhs_only = false);
+                                    const TrilinosWrappers::MPI::Vector &old_solution, const bool rhs_only = false,
+                                    unsigned int n_t_steps = 1, unsigned int t_step = 0);
         void solve_newton_system(TrilinosWrappers::MPI::Vector &newton_increment);
-        void solve_newton();
+        void solve_newton(unsigned int n_t_steps = 1, unsigned int t_step = 0);
         void refine_grid();
         void move_mesh(const TrilinosWrappers::MPI::Vector& displacement) const;
         void output_results(const unsigned int current_time_step, const std::string output_name = "solution");
@@ -1302,10 +1318,16 @@ namespace PlasticityModel
         std::string output_dir;
         const unsigned int n_time_steps;
         unsigned int current_step;
+
+        const double outer_radius;
+        const double inner_radius;
+
+        const double normal_force;
+        const double torque;
     };
 
 
-    // I am not too sure if the indexing which follows is fine
+    // TODO: Might want to pass the geometry parameters of the hollow cylinder
     template <int dim>
     void PlasticityProblem<dim>::declare_parameters(ParameterHandler& prm)
     {
@@ -1368,6 +1390,26 @@ namespace PlasticityModel
                 "Von-Mises",
                 Patterns::Selection("Von-Mises|Tresca"),
                 "Select the yield-criteria: 'Von-Mises' or 'Tresca'.");
+        prm.declare_entry(
+                "outer radius",
+                "10",
+                Patterns::Double(),
+                "The outer radius of the hollow cylinder.");
+        prm.declare_entry(
+                "inner radius",
+                "9",
+                Patterns::Double(),
+                "The inner radius of the hollow cylinder.");
+        prm.declare_entry(
+                "normal force",
+                "100000.0",
+                Patterns::Double(),
+                "The normal force applied the free-end.");
+        prm.declare_entry(
+                "torque",
+                "1000.0",
+                Patterns::Double(),
+                "The torque applied the free-end.");
     }
 
 
@@ -1408,6 +1450,11 @@ namespace PlasticityModel
             , n_time_steps(prm.get_integer("number of time-steps"))
             , current_step(0)
 
+            , outer_radius(prm.get_double("outer radius"))
+            , inner_radius(prm.get_double("inner radius"))
+
+            , normal_force(prm.get_double("normal force"))
+            , torque(prm.get_double("torque"))
     {
         std::string strat = prm.get("refinement strategy");
         if (strat == "global")
@@ -1449,9 +1496,8 @@ namespace PlasticityModel
         {
             // Parameters for the hollow cylinder
             const double length = 1.0;               // Height of the cylinder
-            const double inner_radius = 0.48;        // Inner radius of the cylinder
-            const double outer_radius = 0.5;         // Outer radius of the cylinder
-            const unsigned int n_radial_cells = 3;   // Number of radial cells
+            // NOTE: Use 10 radial cells and 5 axial cells for the hollow cylinder
+            const unsigned int n_radial_cells = 6;  // Number of radial cells
             const unsigned int n_axial_cells = 5;    // Number of axial cells
             const bool colorize = true;              // Assign boundary IDs
 
@@ -1547,14 +1593,13 @@ namespace PlasticityModel
 
         if (problem_type == "tensile")
         {
-            VectorTools::interpolate_boundary_values(
-                    dof_handler,
-                    // top face
-                    5,
-                    // EquationData::BoundaryValues<dim>(),
-                    Functions::ConstantFunction<dim>(displacement, dim),
-                    constraints_dirichlet_and_hanging_nodes,
-                    fe.component_mask(z_displacement));
+//            VectorTools::interpolate_boundary_values(
+//                    dof_handler,
+//                    // top face
+//                    5,
+//                    Functions::ConstantFunction<dim>(displacement, dim),
+//                    constraints_dirichlet_and_hanging_nodes,
+//                    fe.component_mask(z_displacement));
 
             VectorTools::interpolate_boundary_values(
                     dof_handler,
@@ -1572,7 +1617,6 @@ namespace PlasticityModel
                     constraints_dirichlet_and_hanging_nodes,
                     fe.component_mask(x_displacement));
 
-
             VectorTools::interpolate_boundary_values(
                     dof_handler,
                     // back face
@@ -1581,14 +1625,14 @@ namespace PlasticityModel
                     constraints_dirichlet_and_hanging_nodes,
                     fe.component_mask(y_displacement));
         }
-        if (problem_type == "shear")
+        else if (problem_type == "shear")
         {
-            VectorTools::interpolate_boundary_values(
-                    dof_handler,
-                    5,
-                    Functions::ConstantFunction<dim>(displacement, dim),
-                    constraints_dirichlet_and_hanging_nodes,
-                    fe.component_mask(x_displacement));
+//            VectorTools::interpolate_boundary_values(
+//                    dof_handler,
+//                    5,
+//                    Functions::ConstantFunction<dim>(displacement, dim),
+//                    constraints_dirichlet_and_hanging_nodes,
+//                    fe.component_mask(x_displacement));
 
             VectorTools::interpolate_boundary_values(
                     dof_handler,
@@ -1632,7 +1676,7 @@ namespace PlasticityModel
                     constraints_dirichlet_and_hanging_nodes,
                     fe.component_mask(z_displacement));
         }
-        else
+        else if (problem_type == "torsion")
         {
             VectorTools::interpolate_boundary_values(
                     dof_handler,
@@ -1641,19 +1685,22 @@ namespace PlasticityModel
                     constraints_dirichlet_and_hanging_nodes,
                     (fe.component_mask(x_displacement) | fe.component_mask(z_displacement) | fe.component_mask(y_displacement)));
 
-            VectorTools::interpolate_boundary_values(
-                    dof_handler,
-                    3,
-                    Functions::ConstantFunction<dim>(displacement, dim),
-                    constraints_dirichlet_and_hanging_nodes,
-                    fe.component_mask(z_displacement));
+//            VectorTools::interpolate_boundary_values(
+//                    dof_handler,
+//                    3,
+//                    Functions::ConstantFunction<dim>(displacement, dim),
+//                    constraints_dirichlet_and_hanging_nodes,
+//                    fe.component_mask(z_displacement));
         }
     }
 
 
+    // TODO: Pass the problem-type as an argument
+    //  only add the external force effects if there Neumann BC being applied such as in the cylinder problem
     template <int dim>
     void PlasticityProblem<dim>::assemble_newton_system(const TrilinosWrappers::MPI::Vector &solution,
-                                                        const TrilinosWrappers::MPI::Vector &old_solution, const bool rhs_only)
+                                                        const TrilinosWrappers::MPI::Vector &old_solution, const bool rhs_only,
+                                                        unsigned int n_t_steps, unsigned int t_step)
     {
         TimerOutput::Scope t(computing_timer, "Assembling");
 
@@ -1663,8 +1710,15 @@ namespace PlasticityModel
         FEValues<dim> fe_values(fe, quadrature_formula,
                                 update_values | update_gradients | update_JxW_values);
 
+
+        FEFaceValues<dim> fe_values_face(fe,
+                                         face_quadrature_formula,
+                                         update_values | update_quadrature_points |
+                                         update_JxW_values);
+
         const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
         const unsigned int n_q_points = quadrature_formula.size();
+        const unsigned int n_face_q_points = face_quadrature_formula.size();
 
         FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);  // element contribution to the stiffness matrix
         Vector<double> cell_rhs(dofs_per_cell);  // the element contribution to the residual
@@ -1694,6 +1748,8 @@ namespace PlasticityModel
                 {
                     std::shared_ptr<PointHistory<dim>> &qph = quadrature_point_history[cell_index + q_point];
 
+                    qph->set_strain(solution_tensor[q_point]);
+
                     // retrieving D for step iii of Box 4.2 in the textbook
                     SymmetricTensor<4, dim> D_i = qph->get_consistent_tangent_operator();
 
@@ -1703,7 +1759,6 @@ namespace PlasticityModel
                     constitutive_law.return_mapping_and_derivative_stress_strain(solution_tensor[q_point] -
                                                                                 old_solution_tensor[q_point], qph,
                                                                                 yield_criteria);
-                    qph->set_strain(solution_tensor[q_point]);
 
                     SymmetricTensor<2, dim> stress_tensor = qph->get_stress();
 
@@ -1726,6 +1781,73 @@ namespace PlasticityModel
                         cell_rhs(i) -= transpose(fe_values[displacement].symmetric_gradient(i, q_point)) *
                                        stress_tensor * fe_values.JxW(q_point);
                     }
+                }
+
+                // loop over faces of cell
+                for (const auto &face : cell->face_iterators())
+                {
+                    // TODO: Need to find some way to specify the boundary id for the traction
+                    //  using 5 as default for now
+                    if (problem == "torsion")
+                        if (face->at_boundary() && face->boundary_id() == 3)
+                        {
+                            fe_values_face.reinit(cell, face);
+                            for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
+                            {
+                                // TODO: Pass the time-step
+                                EquationData::BoundaryForce<dim> boundary_force(problem, inner_radius, outer_radius, normal_force, torque);
+
+                                Tensor<1, dim> traction;
+                                traction = (1.0 / n_t_steps) * (t_step + 1) * boundary_force.value(fe_values_face.quadrature_point(q_point));
+
+                                for (unsigned int i = 0; i < dofs_per_cell; ++i)
+                                {
+                                    // NOTE: According to the equation this is supposed to the transpose of the shape functions
+                                    cell_rhs(i) += fe_values_face[displacement].value(i, q_point) *
+                                                   traction * fe_values_face.JxW(q_point);
+                                }
+                            }
+                        }
+                    if (problem == "tensile")
+                        if (face->at_boundary() && face->boundary_id() == 5)
+                        {
+                            fe_values_face.reinit(cell, face);
+                            for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
+                            {
+                                // TODO: Pass the time-step
+                                EquationData::BoundaryForce<dim> boundary_force(problem, inner_radius, outer_radius, normal_force, torque);
+
+                                Tensor<1, dim> traction;
+                                traction = (1.0 / n_t_steps) * (t_step + 1) * boundary_force.value(fe_values_face.quadrature_point(q_point));
+
+                                for (unsigned int i = 0; i < dofs_per_cell; ++i)
+                                {
+                                    // NOTE: According to the equation this is supposed to the transpose of the shape functions
+                                    cell_rhs(i) += fe_values_face[displacement].value(i, q_point) *
+                                                   traction * fe_values_face.JxW(q_point);
+                                }
+                            }
+                        }
+                    if (problem == "shear")
+                        if (face->at_boundary() && face->boundary_id() == 5)
+                        {
+                            fe_values_face.reinit(cell, face);
+                            for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
+                            {
+                                // TODO: Pass the time-step
+                                EquationData::BoundaryForce<dim> boundary_force(problem, inner_radius, outer_radius, normal_force, torque);
+
+                                Tensor<1, dim> traction;
+                                traction = (1.0 / n_t_steps) * (t_step + 1) * boundary_force.value(fe_values_face.quadrature_point(q_point));
+
+                                for (unsigned int i = 0; i < dofs_per_cell; ++i)
+                                {
+                                    // NOTE: According to the equation this is supposed to the transpose of the shape functions
+                                    cell_rhs(i) += fe_values_face[displacement].value(i, q_point) *
+                                                   traction * fe_values_face.JxW(q_point);
+                                }
+                            }
+                        }
                 }
 
                 cell->get_dof_indices(local_dof_indices);
@@ -1799,7 +1921,7 @@ namespace PlasticityModel
 
 
     template <int dim>
-    void PlasticityProblem<dim>::solve_newton()
+    void PlasticityProblem<dim>::solve_newton(unsigned int n_time_steps, unsigned int t_step)
     {
         // TrilinosWrappers::MPI::Vector old_solution(locally_owned_dofs, mpi_communicator);
         // TrilinosWrappers::MPI::Vector solution(locally_owned_dofs, mpi_communicator);
@@ -1810,7 +1932,7 @@ namespace PlasticityModel
 
         double residual_norm;
 
-        const double tolerance = 1e-4; // Convergence tolerance for newton loop
+        const double tolerance = 1e-6; // Convergence tolerance for newton loop
 
         double first_newton_increment_norm;
 
@@ -1837,7 +1959,7 @@ namespace PlasticityModel
                 }
             }
 
-            assemble_newton_system(solution, old_solution);  // Assemble the Newton system with the current solution
+            assemble_newton_system(solution, old_solution, false,n_time_steps, t_step);  // Assemble the Newton system with the current solution
 
             TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
 
@@ -1863,7 +1985,7 @@ namespace PlasticityModel
                 tmp_solution.add(alpha, newton_increment);
 
                 // Assemble residual with tmp_solution
-                assemble_newton_system(tmp_solution, old_solution, true); // Only assemble RHS (residual)
+                assemble_newton_system(tmp_solution, old_solution, true, n_time_steps); // Only assemble RHS (residual)
 
                 r = newton_rhs;
 
@@ -2228,7 +2350,7 @@ namespace PlasticityModel
                 constraints_dirichlet_and_hanging_nodes.close();
             }
 
-            solve_newton();
+            solve_newton(n_t_steps, t_step);
 
             store_internal_variables();
 
