@@ -1184,13 +1184,13 @@ namespace PlasticityModel
 
                     traction[0] = (-torque * p[1]) / J;
                     traction[1] = (torque * p[0]) / J;
-                    traction[2] = normal_force / (M_PI * (std::pow(outer_radius, 2) - std::pow(inner_radius, 2)));
+//                    traction[2] = normal_force / (M_PI * (std::pow(outer_radius, 2) - std::pow(inner_radius, 2)));
 
                     // NOTE: The following ensures that the axial stress and shear stress are equal
-//                    const double N = ((2 * std::sqrt(std::pow(p[0], 2) + std::pow(p[1], 2))) /
-//                            (std::pow(outer_radius, 2) + std::pow(inner_radius, 2))) * torque;
-//
-//                    traction[2] = N / (M_PI * (std::pow(outer_radius, 2) - std::pow(inner_radius, 2)));
+                    const double N = ((2 * std::sqrt(std::pow(p[0], 2) + std::pow(p[1], 2))) /
+                            (std::pow(outer_radius, 2) + std::pow(inner_radius, 2))) * torque;
+
+                    traction[2] = N / (M_PI * (std::pow(outer_radius, 2) - std::pow(inner_radius, 2)));
                 }
                 else if (problem_type == "tensile")
                 {
@@ -1492,12 +1492,73 @@ namespace PlasticityModel
 
             GridGenerator::hyper_rectangle(triangulation, p1, p2, true);
         }
-        else
+        else if (mesh == "cylinder")
         {
+//            // Cylinder shell parameters
+//            const double length = 1.0;
+//            const unsigned int n_radial_cells = 10;
+//            const unsigned int n_axial_cells = 5;
+//            const bool colorize = true;
+//
+//            // Generate hollow cylinder
+//            GridGenerator::cylinder_shell(
+//                    triangulation,
+//                    length,
+//                    inner_radius,
+//                    outer_radius,
+//                    n_radial_cells,
+//                    n_axial_cells,
+//                    colorize);
+//
+//            // Assign different boundary IDs to lines at x = 0 and y = 0 on the face at z = 0
+//            const double tolerance = 1e-12;
+//
+//            for (auto &cell : triangulation.active_cell_iterators())
+//            {
+//                for (unsigned int face = 0; face < GeometryInfo<3>::faces_per_cell; ++face)
+//                {
+//                    if (cell->face(face)->at_boundary())
+//                    {
+//                        const auto &face_center = cell->face(face)->center();
+//
+//                        // Check if face is at z = 0
+//                        if (std::abs(face_center[2]) < tolerance)
+//                        {
+//                            bool x_zero = false, y_zero = false;
+//
+//                            for (unsigned int v = 0; v < GeometryInfo<2>::vertices_per_face; ++v)
+//                            {
+//                                const auto &vertex = cell->face(face)->vertex(v);
+//
+//                                if (std::abs(vertex[0]) < tolerance)
+//                                {
+//                                    x_zero = true;
+//                                }
+//                                if (std::abs(vertex[1]) < tolerance)
+//                                {
+//                                    y_zero = true;
+//                                }
+//                            }
+//
+//                            // Assign unique boundary IDs based on conditions
+//                            if (x_zero && !y_zero)
+//                            {
+//                                cell->face(face)->set_boundary_id(111); // Boundary ID for x = 0
+//                            }
+//                            else if (y_zero && !x_zero)
+//                            {
+//                                cell->face(face)->set_boundary_id(222); // Boundary ID for y = 0
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+
+
             // Parameters for the hollow cylinder
             const double length = 1.0;               // Height of the cylinder
             // NOTE: Use 10 radial cells and 5 axial cells for the hollow cylinder
-            const unsigned int n_radial_cells = 6;  // Number of radial cells
+            const unsigned int n_radial_cells = 10;  // Number of radial cells
             const unsigned int n_axial_cells = 5;    // Number of axial cells
             const bool colorize = true;              // Assign boundary IDs
 
@@ -1684,6 +1745,29 @@ namespace PlasticityModel
                     Functions::ZeroFunction<dim>(dim),
                     constraints_dirichlet_and_hanging_nodes,
                     (fe.component_mask(x_displacement) | fe.component_mask(z_displacement) | fe.component_mask(y_displacement)));
+
+//            VectorTools::interpolate_boundary_values(
+//                    dof_handler,
+//                    2,
+//                    Functions::ZeroFunction<dim>(dim),
+//                    constraints_dirichlet_and_hanging_nodes,
+//                    fe.component_mask(z_displacement));
+//
+//            VectorTools::interpolate_boundary_values(
+//                    dof_handler,
+//                    222,
+//                    Functions::ZeroFunction<dim>(dim),
+//                    constraints_dirichlet_and_hanging_nodes,
+//                    (fe.component_mask(x_displacement)) | fe.component_mask(y_displacement));
+//
+//            VectorTools::interpolate_boundary_values(
+//                    dof_handler,
+//                    111,
+//                    Functions::ZeroFunction<dim>(dim),
+//                    constraints_dirichlet_and_hanging_nodes,
+//                    fe.component_mask(y_displacement));
+
+
 
 //            VectorTools::interpolate_boundary_values(
 //                    dof_handler,
@@ -1923,14 +2007,10 @@ namespace PlasticityModel
     template <int dim>
     void PlasticityProblem<dim>::solve_newton(unsigned int n_time_steps, unsigned int t_step)
     {
-        // TrilinosWrappers::MPI::Vector old_solution(locally_owned_dofs, mpi_communicator);
-        // TrilinosWrappers::MPI::Vector solution(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector r(locally_owned_dofs, mpi_communicator);  // residual vector
         TrilinosWrappers::MPI::Vector tmp_vector(locally_owned_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector locally_relevant_tmp_vector(locally_relevant_dofs, mpi_communicator);
         TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs, mpi_communicator);
-
-        double residual_norm;
 
         const double tolerance = 1e-6; // Convergence tolerance for newton loop
 
@@ -1942,7 +2022,10 @@ namespace PlasticityModel
             pcout << "   Newton iteration " << newton_step << std::endl;
 
             double previous_residual_norm = newton_rhs.l2_norm();
-            std::cout << "      Previous residual norm: " << previous_residual_norm << std::endl;
+            if (newton_step != 0)
+            {
+                std::cout << "      Previous residual norm: " << previous_residual_norm << std::endl;
+            }
 
             pcout << "      Assembling system... " << std::endl;
             newton_matrix = 0.;
@@ -1963,60 +2046,59 @@ namespace PlasticityModel
 
             TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs, mpi_communicator);
 
-            // double previous_residual_norm = newton_rhs.l2_norm();
-
             pcout << "      Solving system... " << std::endl;
             solve_newton_system(newton_increment);  // Solve for the Newton increment
 
-            // double previous_residual_norm = newton_rhs.l2_norm();
+            double current_residual_norm = newton_rhs.l2_norm();
+            std::cout << "      Current residual norm: " << current_residual_norm << std::endl;
 
             all_constraints.distribute(newton_increment);
 
-            // Line search algorithm
-            double alpha = 1.0;
-            const double beta = 0.05; // Reduction factor for alpha
-            const double sufficient_decrease = 1.0; // Factor for sufficient residual decrease
-            TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
+//            // Line search algorithm
+//            double alpha = 1.0;
+//            const double beta = 0.05; // Reduction factor for alpha
+//            const double sufficient_decrease = 1.0; // Factor for sufficient residual decrease
+//            TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
+//
+//            while (true)
+//            {
+//                // Compute tentative solution
+//                tmp_solution = solution;
+//                tmp_solution.add(alpha, newton_increment);
+//
+//                // Assemble residual with tmp_solution
+//                assemble_newton_system(tmp_solution, old_solution, true, n_time_steps); // Only assemble RHS (residual)
+//
+//                r = newton_rhs;
+//
+//                residual_norm = r.l2_norm();
+//
+//                pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
+//
+//                if (residual_norm <= previous_residual_norm * sufficient_decrease || newton_step == 0)
+//                {
+//                    // Accept the step if residual is sufficiently decreased
+//                    break;
+//                }
+//                else
+//                {
+//                    // Reduce alpha and try again
+//                    alpha -= beta;
+//                    if (alpha <= 0.1)
+//                    {
+//                        pcout << "      Line search failed to find acceptable alpha." << std::endl;
+//                        break;
+//                    }
+//                }
+//            }
+//
+//            // Update solution with the accepted alpha
+//            solution = tmp_solution;
+//
+//            // Update previous residual norm
+//            previous_residual_norm = residual_norm;
 
-            while (true)
-            {
-                // Compute tentative solution
-                tmp_solution = solution;
-                tmp_solution.add(alpha, newton_increment);
-
-                // Assemble residual with tmp_solution
-                assemble_newton_system(tmp_solution, old_solution, true, n_time_steps); // Only assemble RHS (residual)
-
-                r = newton_rhs;
-
-                residual_norm = r.l2_norm();
-
-                pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
-
-                if (residual_norm <= previous_residual_norm * sufficient_decrease || newton_step == 0)
-                {
-                    // Accept the step if residual is sufficiently decreased
-                    break;
-                }
-                else
-                {
-                    // Reduce alpha and try again
-                    alpha -= beta;
-                    if (alpha <= 0.1)
-                    {
-                        pcout << "      Line search failed to find acceptable alpha." << std::endl;
-                        break;
-                    }
-                }
-            }
-
-            // Update solution with the accepted alpha
-            solution = tmp_solution;
-
-            // Update previous residual norm
-            previous_residual_norm = residual_norm;
-
-            // output_results(newton_step);
+            solution += newton_increment;
 
             // Check for convergence using the norm of the Newton increment
             if (newton_step == 0)
@@ -2034,8 +2116,8 @@ namespace PlasticityModel
                 pcout << "      Current increment norm / First increment norm: "  <<
                       newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
 
-                if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
-                // if (std::abs(residual_norm) < tolerance)
+                // if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
+                if (std::abs(current_residual_norm) < tolerance)
                 {
                     break;
                 }

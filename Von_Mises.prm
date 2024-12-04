@@ -1,6 +1,6 @@
 set polynomial degree             = 1
 set number of initial refinements = 1
-set number of time-steps          = 120
+set number of time-steps          = 200
 set refinement strategy           = global
 set output directory              = Von_Mises
 set base mesh                     = cylinder
@@ -13,4 +13,4 @@ set yield-criteria                = Von-Mises
 set outer radius                  = 0.5
 set inner radius                  = 0.49
 set normal force                  = 10
-set torque                        = 10
+set torque                        = 4
