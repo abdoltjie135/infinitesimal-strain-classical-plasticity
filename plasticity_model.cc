@@ -464,7 +464,7 @@ namespace PlasticityModel
 
             if (phi <= 0)
             {
-                // std::cout << "Elastic step" << std::endl;
+                std::cout << "Elastic step" << std::endl;
 
                 // Elastic step therefore setting values at n+1 to trial values
                 elastic_strain_n1 = elastic_strain_trial;
@@ -552,7 +552,7 @@ namespace PlasticityModel
             // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b) from the textbook
             if (s1 >= s2 && s2 >= s3)
             {
-                // std::cout << "Plastic: one-vector return" << std::endl;
+                std::cout << "Plastic: one-vector return" << std::endl;
 
                 double f = (2.0 * G) / (4.0 * G + H);
 
@@ -613,10 +613,10 @@ namespace PlasticityModel
                 return true;
             }
 
-            // std::cout << "Plastic: two-vector return" << std::endl;
+            std::cout << "Plastic: two-vector return" << std::endl;
 
-            if (deviatoric_stress_trial_eigenvalues[0] + deviatoric_stress_trial_eigenvalues[dim - 1] -
-                2.0 * deviatoric_stress_trial_eigenvalues[1] > 0)
+            if (deviatoric_stress_trial_eigenvalues[0] + deviatoric_stress_trial_eigenvalues[2] -
+                    (2.0 * deviatoric_stress_trial_eigenvalues[1]) > 0.)
             {
                 // Right corner return
 
@@ -1145,7 +1145,8 @@ namespace PlasticityModel
             double s6 = 2.0 * (x[c] * x[c]) * ((y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c]) * (x[a] - x[c]))) +
                         ((x[a] * x[c]) / ((x[a] - x[c]) * (x[a] - x[c]))) *
                         (dy_dx[a][c] + dy_dx[c][a])  - ((x[c] * x[c]) / ((x[a] - x[c]) * (x[a] - x[c]))) *
-                                                       (dy_dx[a][a] + dy_dx[c][c]) - ((x[a] + x[c]) / (x[a] - x[c])) * dy_dx[c][b];
+                                                       (dy_dx[a][a] + dy_dx[c][c]) - ((x[a] + x[c]) / (x[a] - x[c])) *
+                                                       dy_dx[c][b];
 
             D = s1 * dX2_dX - s2 * identity_tensor<dim>() - s3 * outer_product(X, X) +
                 s4 * outer_product(X, unit_symmetric_tensor<dim>()) +
@@ -1425,10 +1426,8 @@ namespace PlasticityModel
             , fe_degree(prm.get_integer("polynomial degree"))
             , fe(FE_Q<dim>(QGaussLobatto<1>(fe_degree + 1)) ^ dim)
             , fe_scalar(fe_degree)
-            // , fe_system(FE_Q<dim>(QGaussLobatto<1>(fe_degree + 1)) ^ (dim + 0.5 * dim * (dim + 1)))
             , dof_handler(triangulation)
             , dof_handler_scalar(triangulation)
-            // , dof_handler_system(triangulation)
 
             , hardening_slope(1550.0)
             , kappa(166670.0)
@@ -1654,13 +1653,13 @@ namespace PlasticityModel
 
         if (problem_type == "tensile")
         {
-//            VectorTools::interpolate_boundary_values(
-//                    dof_handler,
-//                    // top face
-//                    5,
-//                    Functions::ConstantFunction<dim>(displacement, dim),
-//                    constraints_dirichlet_and_hanging_nodes,
-//                    fe.component_mask(z_displacement));
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    // top face
+                    5,
+                    Functions::ConstantFunction<dim>(displacement, dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(z_displacement));
 
             VectorTools::interpolate_boundary_values(
                     dof_handler,
@@ -1688,12 +1687,12 @@ namespace PlasticityModel
         }
         else if (problem_type == "shear")
         {
-//            VectorTools::interpolate_boundary_values(
-//                    dof_handler,
-//                    5,
-//                    Functions::ConstantFunction<dim>(displacement, dim),
-//                    constraints_dirichlet_and_hanging_nodes,
-//                    fe.component_mask(x_displacement));
+            VectorTools::interpolate_boundary_values(
+                    dof_handler,
+                    5,
+                    Functions::ConstantFunction<dim>(displacement, dim),
+                    constraints_dirichlet_and_hanging_nodes,
+                    fe.component_mask(x_displacement));
 
             VectorTools::interpolate_boundary_values(
                     dof_handler,
@@ -1745,29 +1744,6 @@ namespace PlasticityModel
                     Functions::ZeroFunction<dim>(dim),
                     constraints_dirichlet_and_hanging_nodes,
                     (fe.component_mask(x_displacement) | fe.component_mask(z_displacement) | fe.component_mask(y_displacement)));
-
-//            VectorTools::interpolate_boundary_values(
-//                    dof_handler,
-//                    2,
-//                    Functions::ZeroFunction<dim>(dim),
-//                    constraints_dirichlet_and_hanging_nodes,
-//                    fe.component_mask(z_displacement));
-//
-//            VectorTools::interpolate_boundary_values(
-//                    dof_handler,
-//                    222,
-//                    Functions::ZeroFunction<dim>(dim),
-//                    constraints_dirichlet_and_hanging_nodes,
-//                    (fe.component_mask(x_displacement)) | fe.component_mask(y_displacement));
-//
-//            VectorTools::interpolate_boundary_values(
-//                    dof_handler,
-//                    111,
-//                    Functions::ZeroFunction<dim>(dim),
-//                    constraints_dirichlet_and_hanging_nodes,
-//                    fe.component_mask(y_displacement));
-
-
 
 //            VectorTools::interpolate_boundary_values(
 //                    dof_handler,
@@ -1892,46 +1868,46 @@ namespace PlasticityModel
                                 }
                             }
                         }
-                    if (problem == "tensile")
-                        if (face->at_boundary() && face->boundary_id() == 5)
-                        {
-                            fe_values_face.reinit(cell, face);
-                            for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
-                            {
-                                // TODO: Pass the time-step
-                                EquationData::BoundaryForce<dim> boundary_force(problem, inner_radius, outer_radius, normal_force, torque);
-
-                                Tensor<1, dim> traction;
-                                traction = (1.0 / n_t_steps) * (t_step + 1) * boundary_force.value(fe_values_face.quadrature_point(q_point));
-
-                                for (unsigned int i = 0; i < dofs_per_cell; ++i)
-                                {
-                                    // NOTE: According to the equation this is supposed to the transpose of the shape functions
-                                    cell_rhs(i) += fe_values_face[displacement].value(i, q_point) *
-                                                   traction * fe_values_face.JxW(q_point);
-                                }
-                            }
-                        }
-                    if (problem == "shear")
-                        if (face->at_boundary() && face->boundary_id() == 5)
-                        {
-                            fe_values_face.reinit(cell, face);
-                            for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
-                            {
-                                // TODO: Pass the time-step
-                                EquationData::BoundaryForce<dim> boundary_force(problem, inner_radius, outer_radius, normal_force, torque);
-
-                                Tensor<1, dim> traction;
-                                traction = (1.0 / n_t_steps) * (t_step + 1) * boundary_force.value(fe_values_face.quadrature_point(q_point));
-
-                                for (unsigned int i = 0; i < dofs_per_cell; ++i)
-                                {
-                                    // NOTE: According to the equation this is supposed to the transpose of the shape functions
-                                    cell_rhs(i) += fe_values_face[displacement].value(i, q_point) *
-                                                   traction * fe_values_face.JxW(q_point);
-                                }
-                            }
-                        }
+//                    if (problem == "tensile")
+//                        if (face->at_boundary() && face->boundary_id() == 5)
+//                        {
+//                            fe_values_face.reinit(cell, face);
+//                            for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
+//                            {
+//                                // TODO: Pass the time-step
+//                                EquationData::BoundaryForce<dim> boundary_force(problem, inner_radius, outer_radius, normal_force, torque);
+//
+//                                Tensor<1, dim> traction;
+//                                traction = (1.0 / n_t_steps) * (t_step + 1) * boundary_force.value(fe_values_face.quadrature_point(q_point));
+//
+//                                for (unsigned int i = 0; i < dofs_per_cell; ++i)
+//                                {
+//                                    // NOTE: According to the equation this is supposed to the transpose of the shape functions
+//                                    cell_rhs(i) += fe_values_face[displacement].value(i, q_point) *
+//                                                   traction * fe_values_face.JxW(q_point);
+//                                }
+//                            }
+//                        }
+//                    if (problem == "shear")
+//                        if (face->at_boundary() && face->boundary_id() == 5)
+//                        {
+//                            fe_values_face.reinit(cell, face);
+//                            for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
+//                            {
+//                                // TODO: Pass the time-step
+//                                EquationData::BoundaryForce<dim> boundary_force(problem, inner_radius, outer_radius, normal_force, torque);
+//
+//                                Tensor<1, dim> traction;
+//                                traction = (1.0 / n_t_steps) * (t_step + 1) * boundary_force.value(fe_values_face.quadrature_point(q_point));
+//
+//                                for (unsigned int i = 0; i < dofs_per_cell; ++i)
+//                                {
+//                                    // NOTE: According to the equation this is supposed to the transpose of the shape functions
+//                                    cell_rhs(i) += fe_values_face[displacement].value(i, q_point) *
+//                                                   traction * fe_values_face.JxW(q_point);
+//                                }
+//                            }
+//                        }
                 }
 
                 cell->get_dof_indices(local_dof_indices);
@@ -2007,21 +1983,24 @@ namespace PlasticityModel
     template <int dim>
     void PlasticityProblem<dim>::solve_newton(unsigned int n_time_steps, unsigned int t_step)
     {
-        TrilinosWrappers::MPI::Vector r(locally_owned_dofs, mpi_communicator);  // residual vector
-        TrilinosWrappers::MPI::Vector tmp_vector(locally_owned_dofs, mpi_communicator);
-        TrilinosWrappers::MPI::Vector locally_relevant_tmp_vector(locally_relevant_dofs, mpi_communicator);
-        TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs, mpi_communicator);
+//        TrilinosWrappers::MPI::Vector r(locally_owned_dofs, mpi_communicator);  // residual vector
+//        TrilinosWrappers::MPI::Vector tmp_vector(locally_owned_dofs, mpi_communicator);
+//        TrilinosWrappers::MPI::Vector locally_relevant_tmp_vector(locally_relevant_dofs,
+//                                                                  mpi_communicator);
+//        TrilinosWrappers::MPI::Vector distributed_solution(locally_owned_dofs, mpi_communicator);
 
         const double tolerance = 1e-6; // Convergence tolerance for newton loop
 
         double first_newton_increment_norm;
+
+        double previous_residual_norm;
+        double current_residual_norm;
 
         for (unsigned int newton_step = 0; newton_step <= 50; ++newton_step)
         {
             pcout << ' ' << std::endl;
             pcout << "   Newton iteration " << newton_step << std::endl;
 
-            double previous_residual_norm = newton_rhs.l2_norm();
             if (newton_step != 0)
             {
                 std::cout << "      Previous residual norm: " << previous_residual_norm << std::endl;
@@ -2049,56 +2028,72 @@ namespace PlasticityModel
             pcout << "      Solving system... " << std::endl;
             solve_newton_system(newton_increment);  // Solve for the Newton increment
 
-            double current_residual_norm = newton_rhs.l2_norm();
+            current_residual_norm = newton_rhs.l2_norm();
             std::cout << "      Current residual norm: " << current_residual_norm << std::endl;
 
             all_constraints.distribute(newton_increment);
 
-//            // Line search algorithm
-//            double alpha = 1.0;
-//            const double beta = 0.05; // Reduction factor for alpha
-//            const double sufficient_decrease = 1.0; // Factor for sufficient residual decrease
-//            TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
-//
-//            while (true)
-//            {
-//                // Compute tentative solution
-//                tmp_solution = solution;
-//                tmp_solution.add(alpha, newton_increment);
-//
-//                // Assemble residual with tmp_solution
-//                assemble_newton_system(tmp_solution, old_solution, true, n_time_steps); // Only assemble RHS (residual)
-//
-//                r = newton_rhs;
-//
-//                residual_norm = r.l2_norm();
-//
-//                pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
-//
-//                if (residual_norm <= previous_residual_norm * sufficient_decrease || newton_step == 0)
-//                {
-//                    // Accept the step if residual is sufficiently decreased
-//                    break;
-//                }
-//                else
-//                {
-//                    // Reduce alpha and try again
-//                    alpha -= beta;
-//                    if (alpha <= 0.1)
-//                    {
-//                        pcout << "      Line search failed to find acceptable alpha." << std::endl;
-//                        break;
-//                    }
-//                }
-//            }
-//
-//            // Update solution with the accepted alpha
-//            solution = tmp_solution;
-//
-//            // Update previous residual norm
-//            previous_residual_norm = residual_norm;
 
-            solution += newton_increment;
+            // Line-search algorithm
+            TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
+
+            if (newton_step != 0)
+                if (current_residual_norm > previous_residual_norm)
+                {
+                    // Line search algorithm
+                    double alpha = 1.0;
+                    const double beta = 0.01; // Reduction factor for alpha
+
+                    double residual_norm;
+
+                    while (true)
+                    {
+                        // Compute tentative solution
+                        tmp_solution = solution;
+                        tmp_solution.add(alpha, newton_increment);
+
+                        newton_rhs = 0.;
+
+                        // Assemble residual with tmp_solution
+                        assemble_newton_system(tmp_solution, old_solution, true, n_time_steps, t_step); // Only assemble RHS (residual)
+
+                        residual_norm = newton_rhs.l2_norm();
+
+                        pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
+
+                        if (residual_norm <= previous_residual_norm)
+                        {
+                            // Accept the step if residual is sufficiently decreased
+                            break;
+                        }
+                        else
+                        {
+                            alpha = std::max(0.0, alpha - beta);
+                            if (alpha == 0.0)
+                            {
+                                pcout << "      Line search failed to find acceptable alpha." << std::endl;
+                                break;
+                            }
+                        }
+                    }
+                    previous_residual_norm = residual_norm;
+
+                    solution = tmp_solution;
+                }
+                else
+                {
+                    previous_residual_norm = current_residual_norm;
+
+                    solution += newton_increment;
+                }
+            else
+            {
+                previous_residual_norm = current_residual_norm;
+
+                solution += newton_increment;
+            }
+
+
 
             // Check for convergence using the norm of the Newton increment
             if (newton_step == 0)
@@ -2241,6 +2236,7 @@ namespace PlasticityModel
 
         const QGauss<dim> quadrature_formula(fe.degree + 1);
 
+//        MappingQ<dim> mapping(2);
         MappingQ1<dim> mapping;
 
         const std::vector<DataComponentInterpretation::DataComponentInterpretation>
@@ -2327,8 +2323,14 @@ namespace PlasticityModel
             }
 
         // TODO: See effect on solution for curved elements
-        // data_out.build_patches();
+        DataOutBase::VtkFlags flags;
+        flags.write_higher_order_cells = true;
+
+        data_out.set_flags(flags);
+
         data_out.build_patches(mapping, fe_degree, DataOut<dim>::curved_inner_cells);  // this accomodates curved elements
+
+//        data_out.build_patches();
 
         const std::string pvtu_filename =
                 data_out.write_vtu_with_pvtu_record(output_dir,
