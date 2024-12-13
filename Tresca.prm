@@ -1,12 +1,12 @@
 set polynomial degree             = 1
-set number of initial refinements = 1
+set number of initial refinements = 2
 set number of time-steps          = 200
-set refinement strategy           = global
+# set refinement strategy           = global
 set output directory              = Tresca
 set base mesh                     = box
 set problem                       = tensile
 set loading                       = no reverse
-set applied displacement          = 0.01
+set applied displacement          = 0.02
 set yield-criteria                = Tresca
 
 # the following parameters are for the 'torsion' problem

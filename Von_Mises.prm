@@ -1,7 +1,7 @@
 set polynomial degree             = 1
 set number of initial refinements = 1
 set number of time-steps          = 200
-set refinement strategy           = global
+#set refinement strategy           = global
 set output directory              = Von_Mises
 set base mesh                     = cylinder
 set problem                       = torsion

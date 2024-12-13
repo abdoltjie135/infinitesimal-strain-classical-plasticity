@@ -335,13 +335,11 @@ namespace PlasticityModel
         return symmetrize(eigenvectors_tensor * principal_values_tensor * transpose(eigenvectors_tensor));
     }
 
-
     // Function which computes the yield stress
     double yield_stress(double sigma_y_old , double H, double epsilon_p)
     {
         return sigma_y_old + H * epsilon_p;
     }
-
 
     template <int dim>
     void ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
@@ -385,7 +383,8 @@ namespace PlasticityModel
 
         double s1, s2, s3;        // declare principal deviatoric stresses
 
-        double tolerance = 1e-6;  // tolerance for Newton iterations
+        // NOTE: Set this to be slightly more forgiving
+        double tolerance = 1.e-5;  // tolerance for Newton iterations
 
         double delta_gamma;
 
@@ -401,8 +400,6 @@ namespace PlasticityModel
 
             if (phi <= 0)
             {
-//                std::cout << "Elastic step" << std::endl;
-
                 // Elastic step therefore setting values at n+1 to trial values
                 elastic_strain_n1 = elastic_strain_trial;
                 accumulated_plastic_strain_n1 = accumulated_plastic_strain_trial;
@@ -449,6 +446,7 @@ namespace PlasticityModel
                 bool local_newton_converged_one_v = false;
 
                 // One-vector return to main plane (Box 8.2) from the textbook
+                // TODO: make max inner steps an input
                 for (unsigned int iteration = 0; iteration < 50; ++iteration) {
                     // Update yield stress after accumulating plastic strain (Box 8.2, Step ii)
                     // NOTE: for linear isotropic hardening; the hardening slope is constant
@@ -473,9 +471,9 @@ namespace PlasticityModel
                         break;
                     }
                 }
-                // Checking if the Newton iteration converged
+                // Checking if the Newton iteration convergstd::to_string(std::to_string(std::to_string(std::to_string(ed
                 AssertThrow(local_newton_converged_one_v,
-                            ExcMessage("Newton iteration did not converge for one-vector return"));
+                            ExcMessage("Newton iteration did not converge for one-vector return with a residual of "+std::to_string(residual)));
 
                 // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b) from the textbook
                 if (s1 >= s2 && s2 >= s3) {
@@ -1766,40 +1764,44 @@ namespace PlasticityModel
                          newton_rhs,
                          preconditioner);
 
-            pcout << "         Error: " << solver_control.initial_value() << " -> "
-                  << solver_control.last_value() << " in "
-                  << solver_control.last_step() << " GMRES iterations."
-                  << std::endl;
+            // pcout << "         Error: " << solver_control.initial_value() << " -> "
+            //       << solver_control.last_value() << " in "
+            //       << solver_control.last_step() << " GMRES iterations."
+            //       << std::endl;
         }
     }
 
 
-    // TODO: need to make use of the old solution before adding the increment in the line search algorithm.
-    //  you may need to do that for the newton increment as well.
     template <int dim>
     void PlasticityProblem<dim>::solve_newton(unsigned int n_time_steps, unsigned int t_step)
     {
+        // TODO: create these once when setting up system for runtime efficiency
+        // Declare newton_update vector (solution of a Newton iteration),
+        // which must have as many positions as global DoFs.
+        TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs,
+                                                           mpi_communicator);
+        TrilinosWrappers::MPI::Vector tentative_solution(locally_owned_dofs,
+                                                           mpi_communicator);
+        // TODO: make Newton convergence criterion a parameter input
         const double tolerance = 1e-5;
-
-        double first_newton_increment_norm;
 
         double previous_residual_norm;
         double current_residual_norm;
 
-//        TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
-//        TrilinosWrappers::MPI::Vector tentative_solution(locally_owned_dofs, mpi_communicator);
-
-        for (unsigned int newton_step = 0; newton_step <= 50; ++newton_step)
+        // TODO: Make max number of steps an input. Throw error when does not converge
+        unsigned int max_iterations_main_newton_loop = 250;
+        for (unsigned int newton_step = 0; newton_step < max_iterations_main_newton_loop; ++newton_step)
         {
             pcout << ' ' << std::endl;
             pcout << "   Newton iteration " << newton_step << std::endl;
 
+            bool main_newton_loop_converged = false;
             if (newton_step != 0)
             {
-                std::cout << "      Previous residual norm: " << previous_residual_norm << std::endl;
+                std::cout << "      Norm at start of previous step: " << previous_residual_norm << std::endl;
             }
 
-            pcout << "      Assembling system... " << std::endl;
+            // pcout << "      Assembling system... " << std::endl;
             newton_matrix = 0.;
             newton_rhs = 0.;
 
@@ -1816,101 +1818,53 @@ namespace PlasticityModel
 
             assemble_newton_system(solution, old_solution, false,n_time_steps, t_step);
 
-//            tmp_solution = solution;
-
             current_residual_norm = newton_rhs.l2_norm();
-            std::cout << "      Current residual norm: " << current_residual_norm << std::endl;
+            std::cout << "      Norm based on solution from previous step: " << current_residual_norm << std::endl;
 
-            TrilinosWrappers::MPI::Vector newton_increment(locally_owned_dofs,
-                                                           mpi_communicator);
             newton_increment = 0;
 
-            pcout << "      Solving system... " << std::endl;
+            // pcout << "      Solving system... " << std::endl;
             solve_newton_system(newton_increment);
 
             all_constraints.distribute(newton_increment);
 
+            // Explicitly check if this is an improvement
+            double norm_tentative_soln;
+            tentative_solution = solution;
+            tentative_solution.add(1.0,newton_increment);
+            bool line_search_successful = false;
+            if (true || newton_step!=0) {
+                // Line-search algorithm
+                double alpha = 1.0;
+                const double beta = 0.01; // Reduction factor for alpha
 
+                while (alpha>= beta) {
+                    tentative_solution = solution;
+                    tentative_solution.add(1.0,newton_increment);
+                    newton_rhs = 0;
+                    assemble_newton_system(tentative_solution, old_solution, true,
+                                                   n_time_steps, t_step); // Only assemble RHS (residual)
 
-//            // Line-search algorithm
-//            double alpha = 1.0;
-//            const double beta = 0.01; // Reduction factor for alpha
-//
-//            if (newton_step != 0)
-//                if (current_residual_norm > previous_residual_norm)
-//                {
-//                    double residual_norm;
-//
-//                    while (true)
-//                    {
-//                        // Compute tentative solution
-//                        tentative_solution = solution;
-//
-//                        tentative_solution.add(-1, newton_increment);
-//
-//                        tentative_solution.add(alpha, newton_increment);
-//
-////                        tmp_solution.add(alpha, newton_increment);
-//
-//                        newton_rhs = 0.;
-//
-//                        // Assemble residual with tmp_solution
-//                        assemble_newton_system(tentative_solution, old_solution, true,
-//                                               n_time_steps, t_step); // Only assemble RHS (residual)
-//
-//                        residual_norm = newton_rhs.l2_norm();
-//
-//                        pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
-//
-//                        if (residual_norm <= previous_residual_norm)
-//                        {
-//                            // Accept the step if residual is sufficiently decreased
-//                            break;
-//                        }
-//                        else
-//                        {
-//                            alpha = std::max(0.0, alpha - beta);
-//                            if (alpha == 0.0)
-//                            {
-//                                pcout << "      Line search failed to find acceptable alpha." << std::endl;
-//                                break;
-//                            }
-//                        }
-//                    }
-//                }
-//
-////            tmp_solution = solution;
-//
-//            solution.add(alpha, newton_increment);
-//            previous_residual_norm = current_residual_norm;
-
-
+                    norm_tentative_soln = newton_rhs.l2_norm();
+                    std::cout<<"      Norm of tentative new solution "<<norm_tentative_soln<<"with alpha of "<<alpha<<std::endl;
+                    if (norm_tentative_soln<current_residual_norm || norm_tentative_soln<= tolerance) {
+                        line_search_successful = true;
+                        break;
+                    }
+                    alpha -= beta;
+                }
+            }
+            if (line_search_successful)
+                solution = tentative_solution;
+            else
+                AssertThrow(false, ExcMessage("Step does not make things better"));
 
             previous_residual_norm = current_residual_norm;
 
-            solution += newton_increment;
+            if (std::abs(current_residual_norm) < tolerance)
+                break;
 
-            if (newton_step == 0)
-            {
-                first_newton_increment_norm = newton_increment.l2_norm();
-
-                pcout << "      First Newton increment norm: " << first_newton_increment_norm << std::endl;
-            }
-            else
-            {
-                pcout << "      First Newton increment norm: " << first_newton_increment_norm << std::endl;
-
-                pcout << "      Current Newton increment norm: " << newton_increment.l2_norm() << std::endl;
-
-                pcout << "      Current increment norm / First increment norm: "  <<
-                      newton_increment.l2_norm() / first_newton_increment_norm << std::endl;
-
-                // if (std::abs(newton_increment.l2_norm() / first_newton_increment_norm) < tolerance)
-                if (std::abs(current_residual_norm) < tolerance)
-                {
-                    break;
-                }
-            }
+            // AssertThrow(false, ExcMessage("Did not converge"));
         }
     }
 
@@ -1938,7 +1892,6 @@ namespace PlasticityModel
                         cell->vertex(v) += vertex_displacement;
                     }
     }
-
 
     template <int dim>
     void PlasticityProblem<dim>::store_internal_variables()
