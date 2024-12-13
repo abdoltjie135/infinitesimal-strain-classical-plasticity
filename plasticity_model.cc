@@ -250,7 +250,7 @@ namespace PlasticityModel
         // The following function performs the return-mapping algorithm (for the Tresca yield-criteria)
         // and determines the derivative of stress with respect to strain based off of whether a one-vector or a
         // two-vector return was used.
-        bool return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim> &delta_strain,
+        void return_mapping_and_derivative_stress_strain(const SymmetricTensor<2, dim> &delta_strain,
                                                          std::shared_ptr<PointHistory<dim>> &qph,
                                                          std::string yield_criteria) const;
 
@@ -344,7 +344,7 @@ namespace PlasticityModel
 
 
     template <int dim>
-    bool ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
+    void ConstitutiveLaw<dim>::return_mapping_and_derivative_stress_strain(
             const SymmetricTensor<2, dim> &delta_strain,
             std::shared_ptr<PointHistory<dim>> &qph,
             std::string yield_criteria) const
@@ -435,71 +435,226 @@ namespace PlasticityModel
                                 K * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
 
                 qph->set_consistent_tangent_operator(consistent_tangent_operator);
-
-                return false;
             }
-            // Plastic step: Return Mapping (Box 8.1, Step iv) from the textbook
-
-            qph->set_is_plastic(true);
-
-            double residual = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[dim - 1] -
-                              yield_stress(yield_stress_0, H, accumulated_plastic_strain_n);
-
-            bool local_newton_converged_one_v = false;
-
-            // One-vector return to main plane (Box 8.2) from the textbook
-            for (unsigned int iteration = 0; iteration < 50; ++iteration)
+            else
             {
-                // Update yield stress after accumulating plastic strain (Box 8.2, Step ii)
-                // NOTE: for linear isotropic hardening; the hardening slope is constant
-                double residual_derivative = -4.0 * G - H;
-                delta_gamma -= residual / residual_derivative;
+                // Plastic step: Return Mapping (Box 8.1, Step iv) from the textbook
 
-                // Compute the residual (Box 8.2, Step ii)
-                residual = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[dim - 1] -
-                           4.0 * G * delta_gamma - yield_stress(yield_stress_0, H,
-                                                                accumulated_plastic_strain_n + delta_gamma);
+                qph->set_is_plastic(true);
 
-                if (std::abs(residual) <= tolerance)
-                {
-                    // Update principal deviatoric stresses (Box 8.2, Step iii)
-                    s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * delta_gamma;
-                    s2 = deviatoric_stress_trial_eigenvalues[1];
-                    s3 = deviatoric_stress_trial_eigenvalues[2] + 2.0 * G * delta_gamma;
+                double residual =
+                        deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[dim - 1] -
+                        yield_stress(yield_stress_0, H, accumulated_plastic_strain_n);
 
-                    accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
+                bool local_newton_converged_one_v = false;
 
-                    local_newton_converged_one_v = true;
+                // One-vector return to main plane (Box 8.2) from the textbook
+                for (unsigned int iteration = 0; iteration < 50; ++iteration) {
+                    // Update yield stress after accumulating plastic strain (Box 8.2, Step ii)
+                    // NOTE: for linear isotropic hardening; the hardening slope is constant
+                    double residual_derivative = -4.0 * G - H;
+                    delta_gamma -= residual / residual_derivative;
 
-                    break;
+                    // Compute the residual (Box 8.2, Step ii)
+                    residual = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[dim - 1] -
+                               4.0 * G * delta_gamma - yield_stress(yield_stress_0, H,
+                                                                    accumulated_plastic_strain_n + delta_gamma);
+
+                    if (std::abs(residual) <= tolerance) {
+                        // Update principal deviatoric stresses (Box 8.2, Step iii)
+                        s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * delta_gamma;
+                        s2 = deviatoric_stress_trial_eigenvalues[1];
+                        s3 = deviatoric_stress_trial_eigenvalues[2] + 2.0 * G * delta_gamma;
+
+                        accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
+
+                        local_newton_converged_one_v = true;
+
+                        break;
+                    }
                 }
-            }
-            // Checking if the Newton iteration converged
-            AssertThrow(local_newton_converged_one_v,
-                        ExcMessage("Newton iteration did not converge for one-vector return"));
+                // Checking if the Newton iteration converged
+                AssertThrow(local_newton_converged_one_v,
+                            ExcMessage("Newton iteration did not converge for one-vector return"));
 
-            // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b) from the textbook
-            if (s1 >= s2 && s2 >= s3)
-            {
+                // Check if the updated principal stresses satisfy s1 >= s2 >= s3 (Box 8.1, Step iv.b) from the textbook
+                if (s1 >= s2 && s2 >= s3) {
 //                std::cout << "Plastic: one-vector return" << std::endl;
 
-                double f = (2.0 * G) / (4.0 * G + H);
+                    double f = (2.0 * G) / (4.0 * G + H);
 
-                // This relates to equation 8.4.1 in the textbook
-                ds_de[0][0] = 2.0 * G * (1.0 - f);
-                ds_de[0][2] = 2.0 * G * f;
-                ds_de[1][1] = 2.0 * G;
-                ds_de[2][0] = 2.0 * G * f;
-                ds_de[2][2] = 2.0 * G * (1.0 - f);
+                    // This relates to equation 8.4.1 in the textbook
+                    ds_de[0][0] = 2.0 * G * (1.0 - f);
+                    ds_de[0][2] = 2.0 * G * f;
+                    ds_de[1][1] = 2.0 * G;
+                    ds_de[2][0] = 2.0 * G * f;
+                    ds_de[2][2] = 2.0 * G * (1.0 - f);
+                }
+                else
+                {
+//                   std::cout << "Plastic: two-vector return" << std::endl;
 
+                    if (deviatoric_stress_trial_eigenvalues[0] + deviatoric_stress_trial_eigenvalues[2] -
+                        (2.0 * deviatoric_stress_trial_eigenvalues[1]) > 0.0)
+                    {
+                        // Right corner return
+//                        std::cout << "Right corner return" << std::endl;
+
+                        // This relates to equation 8.52 in the textbook
+                        double daa = -4.0 * G - H;
+                        double dab = -2.0 * G - H;
+                        double dba = -2.0 * G - H;
+                        double dbb = -4.0 * G - H;
+
+                        double det_d = daa * dbb - dab * dba;
+
+                        ds_de[0][0] = 2.0 * G * (1.0 - ((8.0 * pow(G, 2.0)) / det_d));
+                        ds_de[0][1] = ((4.0 * pow(G, 2.0)) / det_d) * (dab - daa);
+                        ds_de[0][2] = ((4.0 * pow(G, 2.0)) / det_d) * (dba - dbb);
+                        ds_de[1][0] = (8.0 * pow(G, 3.0)) / det_d;
+                        ds_de[1][1] = 2.0 * G * (1.0 + ((2.0 * G * daa) / det_d));
+                        ds_de[1][2] = -(4.0 * pow(G, 2.0) / det_d) * dba;
+                        ds_de[2][0] = (8.0 * pow(G, 3.0)) / det_d;
+                        ds_de[2][1] = -(4.0 * pow(G, 2.0) / det_d) * dab;
+                        ds_de[2][2] = 2.0 * G * (1.0 + ((2.0 * G * dbb) / det_d));
+
+                        Vector<double> delta_gamma_vector(2);
+                        delta_gamma_vector = 0.0;
+
+                        double s_b = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[1];
+                        double s_a = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[2];
+
+                        Vector<double> residual_vector(2);
+                        residual_vector[0] = s_a - yield_stress(yield_stress_0, H,
+                                                                accumulated_plastic_strain_n);
+                        residual_vector[1] = s_b - yield_stress(yield_stress_0, H,
+                                                                accumulated_plastic_strain_n);
+
+                        Vector<double> delta_gamma_vector_update(2);
+                        delta_gamma_vector_update = 0.0;
+
+                        double delta_gamma_sum;
+
+                        FullMatrix<double> d_matrix(2, 2);
+                        d_matrix(0, 0) = -4.0 * G - H;
+                        d_matrix(0, 1) = -2.0 * G - H;
+                        d_matrix(1, 0) = -2.0 * G - H;
+                        d_matrix(1, 1) = -4.0 * G - H;
+
+                        FullMatrix<double> d_matrix_inverse(2, 2);
+                        d_matrix_inverse.invert(d_matrix);
+
+                        // Newton iteration for two-vector return (Box 8.3, Step ii) from the textbook
+                        for (unsigned int iteration = 0; iteration < 50; ++iteration) {
+                            delta_gamma_sum = delta_gamma_vector[0] + delta_gamma_vector[1];
+                            accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma_sum;
+
+                            residual_vector *= -1.0;
+                            d_matrix_inverse.vmult(delta_gamma_vector_update, residual_vector);
+
+                            delta_gamma_vector += delta_gamma_vector_update;
+
+                            residual_vector[0] = s_a - 2.0 * G * (2.0 * delta_gamma_vector[0] + delta_gamma_vector[1]) -
+                                                 yield_stress(yield_stress_0, H, accumulated_plastic_strain_n1);
+                            residual_vector[1] = s_b - 2.0 * G * (delta_gamma_vector[0] + 2.0 * delta_gamma_vector[1]) -
+                                                 yield_stress(yield_stress_0, H, accumulated_plastic_strain_n1);
+
+                            if (abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance) {
+                                s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * (delta_gamma_vector[0] +
+                                                                                         delta_gamma_vector[1]);
+                                s2 = deviatoric_stress_trial_eigenvalues[1] + 2.0 * G * delta_gamma_vector[1];
+                                s3 = deviatoric_stress_trial_eigenvalues[2] + 2.0 * G * delta_gamma_vector[0];
+
+                                break;
+                            }
+                        }
+                        AssertThrow(abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance,
+                                    ExcMessage("Two-vector return did not converge"));
+                    }
+                    else
+                    {
+                        // Left corner return
+//                       std::cout << "Left corner return" << std::endl;
+
+                        double daa = -4.0 * G - H;
+                        double dab = -2.0 * G - H;
+                        double dba = -2.0 * G - H;
+                        double dbb = -4.0 * G - H;
+
+                        double det_d = daa * dbb - dab * dba;
+
+                        ds_de[0][0] = 2.0 * G * (1.0 + ((2.0 * G * dbb) / det_d));
+                        ds_de[0][1] = -(4.0 * pow(G, 2.0) / det_d) * dab;
+                        ds_de[0][2] = (8.0 * pow(G, 3.0)) / det_d;
+                        ds_de[1][0] = -(4.0 * pow(G, 2.0) / det_d) * dba;
+                        ds_de[1][1] = 2.0 * G * (1.0 + ((2.0 * G * daa) / det_d));
+                        ds_de[1][2] = (8.0 * pow(G, 3.0)) / det_d;
+                        ds_de[2][0] = (4.0 * pow(G, 2.0) / det_d) * (dba - dbb);
+                        ds_de[2][1] = (4.0 * pow(G, 2.0) / det_d) * (dab - daa);
+                        ds_de[2][2] = 2.0 * G * (1.0 - ((8.0 * pow(G, 2.0)) / det_d));
+
+                        Vector<double> delta_gamma_vector(2);
+                        delta_gamma_vector = 0.0;
+
+                        double s_b = deviatoric_stress_trial_eigenvalues[1] - deviatoric_stress_trial_eigenvalues[2];
+                        double s_a = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[2];
+
+                        Vector<double> residual_vector(2);
+                        residual_vector[0] = s_a - yield_stress(yield_stress_0, H,
+                                                                accumulated_plastic_strain_n);
+                        residual_vector[1] = s_b - yield_stress(yield_stress_0, H,
+                                                                accumulated_plastic_strain_n);
+
+                        Vector<double> delta_gamma_vector_update(2);
+                        delta_gamma_vector_update = 0.0;
+
+                        double delta_gamma_sum;
+
+                        FullMatrix<double> d_matrix(2, 2);
+                        d_matrix(0, 0) = -4.0 * G - H;
+                        d_matrix(0, 1) = -2.0 * G - H;
+                        d_matrix(1, 0) = -2.0 * G - H;
+                        d_matrix(1, 1) = -4.0 * G - H;
+
+                        FullMatrix<double> d_matrix_inverse(2, 2);
+                        d_matrix_inverse.invert(d_matrix);
+
+                        // Newton iteration for two-vector return (Box 8.3, Step ii) from the textbook
+                        for (unsigned int iteration = 0; iteration < 50; ++iteration) {
+                            delta_gamma_sum = delta_gamma_vector[0] + delta_gamma_vector[1];
+                            accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma_sum;
+
+                            residual_vector *= -1.0;
+                            d_matrix_inverse.vmult(delta_gamma_vector_update, residual_vector);
+
+                            delta_gamma_vector += delta_gamma_vector_update;
+
+                            residual_vector[0] = s_a - 2.0 * G * (2.0 * delta_gamma_vector[0] + delta_gamma_vector[1]) -
+                                                 yield_stress(yield_stress_0, H,
+                                                              accumulated_plastic_strain_n1);
+                            residual_vector[1] = s_b - 2.0 * G * (delta_gamma_vector[0] + 2.0 * delta_gamma_vector[1]) -
+                                                 yield_stress(yield_stress_0, H,
+                                                              accumulated_plastic_strain_n1);
+
+                            if (abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance) {
+                                s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * delta_gamma_vector[0];
+                                s2 = deviatoric_stress_trial_eigenvalues[1] - 2.0 * G * delta_gamma_vector[1];
+                                s3 = deviatoric_stress_trial_eigenvalues[2] + 2.0 * G * (delta_gamma_vector[0] +
+                                                                                         delta_gamma_vector[1]);
+
+                                break;
+                            }
+                        }
+                        AssertThrow(abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance,
+                                    ExcMessage("Two-vector return did not converge"));
+                    }
+                }
                 // Equation 8.46 from textbook
                 for (unsigned int i = 0; i < 3; ++i)
-                    for (unsigned int j = 0; j < 3; ++j)
-                    {
+                    for (unsigned int j = 0; j < 3; ++j) {
                         dsigma_de[i][j] = K;
 
-                        for (unsigned int k = 0; k < 3; ++k)
-                        {
+                        for (unsigned int k = 0; k < 3; ++k) {
                             double delta_kj = (k == j) ? 1.0 : 0.0;
                             dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
                         }
@@ -523,7 +678,7 @@ namespace PlasticityModel
                 elastic_strain_n1 = 1.0 / (2.0 * G) *
                                     reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}},
                                                        elastic_strain_trial_eigenvectors_matrix) +
-                                                       (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
+                                    (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
 
                 qph->set_stress(stress_n1_reconstructed);
                 qph->set_elastic_strain(elastic_strain_n1);
@@ -535,253 +690,7 @@ namespace PlasticityModel
                                                        elastic_strain_trial, stress_n1, dsigma_de);
 
                 qph->set_consistent_tangent_operator(consistent_tangent_operator);
-
-                return true;
             }
-//            std::cout << "Plastic: two-vector return" << std::endl;
-
-            if (deviatoric_stress_trial_eigenvalues[0] + deviatoric_stress_trial_eigenvalues[2] -
-                    (2.0 * deviatoric_stress_trial_eigenvalues[1]) > 0.0)
-            {
-                // Right corner return
-//                std::cout << "Right corner return" << std::endl;
-
-                // This relates to equation 8.52 in the textbook
-                double daa = -4.0 * G - H;
-                double dab = -2.0 * G - H;
-                double dba = -2.0 * G - H;
-                double dbb = -4.0 * G - H;
-
-                double det_d = daa * dbb - dab * dba;
-
-                ds_de[0][0] = 2.0 * G * (1.0 - ((8.0 * pow(G, 2.0)) / det_d));
-                ds_de[0][1] = ((4.0 * pow(G, 2.0)) / det_d) * (dab - daa);
-                ds_de[0][2] = ((4.0 * pow(G, 2.0)) / det_d) * (dba - dbb);
-                ds_de[1][0] = (8.0 * pow(G, 3.0)) / det_d;
-                ds_de[1][1] = 2.0 * G * (1.0 + ((2.0 * G * daa) / det_d));
-                ds_de[1][2] = -(4.0 * pow(G, 2.0) / det_d) * dba;
-                ds_de[2][0] = (8.0 * pow(G, 3.0)) / det_d;
-                ds_de[2][1] = -(4.0 * pow(G, 2.0) / det_d) * dab;
-                ds_de[2][2] = 2.0 * G * (1.0 + ((2.0 * G * dbb) / det_d));
-
-                // TODO: Add check to ensure that it is symmetric in run state
-                for (unsigned int i = 0; i < dim; ++i)
-                    for (unsigned int j = 0; j < dim; ++j)
-                    {
-                        dsigma_de[i][j] = K;
-
-                        for (unsigned int k = 0; k < dim; ++k)
-                        {
-                            double delta_kj = (k == j) ? 1.0 : 0.0;
-                            dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
-                        }
-                    }
-
-                Vector<double> delta_gamma_vector(2);
-                delta_gamma_vector = 0.0;
-
-                double s_b = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[1];
-                double s_a = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[2];
-
-                Vector<double> residual_vector(2);
-                residual_vector[0] = s_a - yield_stress(yield_stress_0, H,
-                                                        accumulated_plastic_strain_n);
-                residual_vector[1] = s_b - yield_stress(yield_stress_0, H,
-                                                        accumulated_plastic_strain_n);
-
-                Vector<double> delta_gamma_vector_update(2);
-                delta_gamma_vector_update = 0.0;
-
-                double delta_gamma_sum;
-
-                FullMatrix<double> d_matrix(2, 2);
-                d_matrix(0, 0) = -4.0 * G - H;
-                d_matrix(0, 1) = -2.0 * G - H;
-                d_matrix(1, 0) = -2.0 * G - H;
-                d_matrix(1, 1) = -4.0 * G - H;
-
-                FullMatrix<double> d_matrix_inverse(2, 2);
-                d_matrix_inverse.invert(d_matrix);
-
-                // Newton iteration for two-vector return (Box 8.3, Step ii) from the textbook
-                for (unsigned int iteration = 0; iteration < 50; ++iteration)
-                {
-                    delta_gamma_sum = delta_gamma_vector[0] + delta_gamma_vector[1];
-                    accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma_sum;
-
-                    residual_vector *= -1.0;
-                    d_matrix_inverse.vmult(delta_gamma_vector_update, residual_vector);
-
-                    delta_gamma_vector += delta_gamma_vector_update;
-
-                    residual_vector[0] = s_a - 2.0 * G * (2.0 * delta_gamma_vector[0] + delta_gamma_vector[1]) -
-                                         yield_stress(yield_stress_0, H, accumulated_plastic_strain_n1);
-                    residual_vector[1] = s_b - 2.0 * G * (delta_gamma_vector[0] + 2.0 * delta_gamma_vector[1]) -
-                                         yield_stress(yield_stress_0, H, accumulated_plastic_strain_n1);
-
-                    if (abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance)
-                    {
-                        s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * (delta_gamma_vector[0] +
-                                delta_gamma_vector[1]);
-                        s2 = deviatoric_stress_trial_eigenvalues[1] + 2.0 * G * delta_gamma_vector[1];
-                        s3 = deviatoric_stress_trial_eigenvalues[2] + 2.0 * G * delta_gamma_vector[0];
-
-                        break;
-                    }
-                }
-                AssertThrow(abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance,
-                            ExcMessage("Two-vector return did not converge"));
-
-                qph->set_principal_stresses({s1, s2, s3});
-
-                double p_n1 = p_trial;
-
-                s_n1[0][0] = s1;
-                s_n1[1][1] = s2;
-                s_n1[2][2] = s3;
-
-                stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
-
-                SymmetricTensor<2, dim> stress_n1_reconstructed =
-                        reconstruct_tensor({{stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]}},
-                                           elastic_strain_trial_eigenvectors_matrix);
-
-                elastic_strain_n1 = 1.0 / (2.0 * G) *
-                                    reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}},
-                                                       elastic_strain_trial_eigenvectors_matrix) +
-                                                       (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
-
-                qph->set_stress(stress_n1_reconstructed);
-                qph->set_elastic_strain(elastic_strain_n1);
-                qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
-
-                consistent_tangent_operator =
-                        derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
-                                                       elastic_strain_trial_eigenvectors_matrix,
-                                                       elastic_strain_trial,stress_n1,dsigma_de);
-
-                qph->set_consistent_tangent_operator(consistent_tangent_operator);
-
-                return true;
-            }
-            // Left corner return
-//            std::cout << "Left corner return" << std::endl;
-
-            double daa = -4.0 * G - H;
-            double dab = -2.0 * G - H;
-            double dba = -2.0 * G - H;
-            double dbb = -4.0 * G - H;
-
-            double det_d = daa * dbb - dab * dba;
-
-            ds_de[0][0] = 2.0 * G * (1.0 + ((2.0 * G * dbb) / det_d));
-            ds_de[0][1] = -(4.0 * pow(G, 2.0) / det_d) * dab;
-            ds_de[0][2] = (8.0 * pow(G, 3.0)) / det_d;
-            ds_de[1][0] = -(4.0 * pow(G, 2.0) / det_d) * dba;
-            ds_de[1][1] = 2.0 * G * (1.0 + ((2.0 * G * daa) / det_d));
-            ds_de[1][2] = (8.0 * pow(G, 3.0)) / det_d;
-            ds_de[2][0] = (4.0 * pow(G, 2.0) / det_d) * (dba - dbb);
-            ds_de[2][1] = (4.0 * pow(G, 2.0) / det_d) * (dab - daa);
-            ds_de[2][2] = 2.0 * G * (1.0 - ((8.0 * pow(G, 2.0)) / det_d));
-
-            for (unsigned int i = 0; i < 3; ++i)
-                for (unsigned int j = 0; j < 3; ++j)
-                {
-                    dsigma_de[i][j] = K;
-
-                    for (unsigned int k = 0; k < 3; ++k)
-                    {
-                        double delta_kj = (k == j) ? 1.0 : 0.0;
-                        dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
-                    }
-                }
-
-            Vector<double> delta_gamma_vector(2);
-            delta_gamma_vector = 0.0;
-
-            double s_b = deviatoric_stress_trial_eigenvalues[1] - deviatoric_stress_trial_eigenvalues[2];
-            double s_a = deviatoric_stress_trial_eigenvalues[0] - deviatoric_stress_trial_eigenvalues[2];
-
-            Vector<double> residual_vector(2);
-            residual_vector[0] = s_a - yield_stress(yield_stress_0, H,
-                                                    accumulated_plastic_strain_n);
-            residual_vector[1] = s_b - yield_stress(yield_stress_0, H,
-                                                    accumulated_plastic_strain_n);
-
-            Vector<double> delta_gamma_vector_update(2);
-            delta_gamma_vector_update = 0.0;
-
-            double delta_gamma_sum;
-
-            FullMatrix<double> d_matrix(2, 2);
-            d_matrix(0, 0) = -4.0 * G - H;
-            d_matrix(0, 1) = -2.0 * G - H;
-            d_matrix(1, 0) = -2.0 * G - H;
-            d_matrix(1, 1) = -4.0 * G - H;
-
-            FullMatrix<double> d_matrix_inverse(2, 2);
-            d_matrix_inverse.invert(d_matrix);
-
-            // Newton iteration for two-vector return (Box 8.3, Step ii) from the textbook
-            for (unsigned int iteration = 0; iteration < 50; ++iteration)
-            {
-                delta_gamma_sum = delta_gamma_vector[0] + delta_gamma_vector[1];
-                accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma_sum;
-
-                residual_vector *= -1.0;
-                d_matrix_inverse.vmult(delta_gamma_vector_update, residual_vector);
-
-                delta_gamma_vector += delta_gamma_vector_update;
-
-                residual_vector[0] = s_a - 2.0 * G * (2.0 * delta_gamma_vector[0] + delta_gamma_vector[1]) -
-                                     yield_stress(yield_stress_0, H, accumulated_plastic_strain_n1);
-                residual_vector[1] = s_b - 2.0 * G * (delta_gamma_vector[0] + 2.0 * delta_gamma_vector[1]) -
-                                     yield_stress(yield_stress_0, H, accumulated_plastic_strain_n1);
-
-                if (abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance)
-                {
-                    s1 = deviatoric_stress_trial_eigenvalues[0] - 2.0 * G * delta_gamma_vector[0];
-                    s2 = deviatoric_stress_trial_eigenvalues[1] - 2.0 * G * delta_gamma_vector[1];
-                    s3 = deviatoric_stress_trial_eigenvalues[2] + 2.0 * G * (delta_gamma_vector[0] +
-                                                                             delta_gamma_vector[1]);
-
-                    break;
-                }
-            }
-            AssertThrow(abs(residual_vector[0]) + abs(residual_vector[1]) <= tolerance,
-                        ExcMessage("Two-vector return did not converge"));
-
-            qph->set_principal_stresses({s1, s2, s3});
-
-            double p_n1 = p_trial;
-
-            s_n1[0][0] = s1;
-            s_n1[1][1] = s2;
-            s_n1[2][2] = s3;
-
-            stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
-
-            SymmetricTensor<2, dim> stress_n1_reconstructed =
-                    reconstruct_tensor({{stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]}},
-                                       elastic_strain_trial_eigenvectors_matrix);
-
-            elastic_strain_n1 =
-                    1.0 / (2.0 * G) * reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}},
-                                                         elastic_strain_trial_eigenvectors_matrix) +
-                                                         (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
-
-            qph->set_stress(stress_n1_reconstructed);
-            qph->set_elastic_strain(elastic_strain_n1);
-            qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
-
-            consistent_tangent_operator =
-                    derivative_of_isotropic_tensor(elastic_strain_trial_eigenvalues,
-                                                   elastic_strain_trial_eigenvectors_matrix,
-                                                   elastic_strain_trial, stress_n1, dsigma_de);
-
-            qph->set_consistent_tangent_operator(consistent_tangent_operator);
-
-            return true;
         }
         if (yield_criteria == "Von-Mises")
         {
@@ -789,7 +698,7 @@ namespace PlasticityModel
 
             if (q_trial - yield_stress(yield_stress_0, H, accumulated_plastic_strain_trial) <= 0)
             {
-//                 std::cout << "Elastic step" << std::endl;
+//                std::cout << "Elastic step" << std::endl;
 
                 // Elastic step therefore setting values at n+1 to trial values
                 elastic_strain_n1 = elastic_strain_trial;
@@ -822,72 +731,69 @@ namespace PlasticityModel
 
                 qph->set_consistent_tangent_operator(consistent_tangent_operator);
                 qph->set_is_plastic(false);
-
-                return false;
             }
-            qph->set_is_plastic(true);
-
-//            std::cout << "Plastic step" << std::endl;
-
-            double residual = q_trial - yield_stress(yield_stress_0, H, accumulated_plastic_strain_n);
-
-            for (unsigned int iteration = 0; iteration < 100; ++iteration)
+            else
             {
-                const double residual_derivative = -3.0 * G - H;
-                delta_gamma -= residual / residual_derivative;
+                qph->set_is_plastic(true);
 
-                residual = q_trial - 3.0 * G * delta_gamma -
-                        yield_stress(yield_stress_0, H, accumulated_plastic_strain_n + delta_gamma);
+//                std::cout << "Plastic step" << std::endl;
 
-                if (std::abs(residual) < tolerance)
-                {
-                    break;
+                double residual = q_trial - yield_stress(yield_stress_0, H, accumulated_plastic_strain_n);
+
+                for (unsigned int iteration = 0; iteration < 100; ++iteration) {
+                    const double residual_derivative = -3.0 * G - H;
+                    delta_gamma -= residual / residual_derivative;
+
+                    residual = q_trial - 3.0 * G * delta_gamma -
+                               yield_stress(yield_stress_0, H, accumulated_plastic_strain_n + delta_gamma);
+
+                    if (std::abs(residual) < tolerance) {
+                        break;
+                    }
                 }
+                AssertThrow(std::abs(residual) < tolerance,
+                            ExcMessage("Newton iteration did not converge for Von-Mises yield criteria"));
+
+                accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
+
+                s_n1[0][0] = (1.0 - (delta_gamma * 3.0 * G) / q_trial) * deviatoric_stress_trial_eigenvalues[0];
+                s_n1[1][1] = (1.0 - (delta_gamma * 3.0 * G) / q_trial) * deviatoric_stress_trial_eigenvalues[1];
+                s_n1[2][2] = (1.0 - (delta_gamma * 3.0 * G) / q_trial) * deviatoric_stress_trial_eigenvalues[2];
+
+                qph->set_principal_stresses({s_n1[0][0], s_n1[1][1], s_n1[2][2]});
+
+                double p_n1 = p_trial;
+
+                stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
+
+                SymmetricTensor<2, dim> stress_n1_reconstructed =
+                        reconstruct_tensor({{stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]}},
+                                           elastic_strain_trial_eigenvectors_matrix);
+
+                elastic_strain_n1 = (1.0 / (2.0 * G)) *
+                                    reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}},
+                                                       elastic_strain_trial_eigenvectors_matrix) +
+                                    (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
+
+                qph->set_stress(stress_n1_reconstructed);
+                qph->set_elastic_strain(elastic_strain_n1);
+                qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
+
+                SymmetricTensor<2, dim> N_n1 = deviatoric_stress_trial / deviatoric_stress_trial.norm();
+
+                consistent_tangent_operator = 2.0 * G * (1.0 - (delta_gamma * 3.0 * G) / q_trial) *
+                                              (identity_tensor<dim>() -
+                                               (1.0 / 3.0) * outer_product(unit_symmetric_tensor<dim>(),
+                                                                           unit_symmetric_tensor<dim>())) +
+                                              6.0 * G * G *
+                                              (delta_gamma / q_trial - (1.0 / (3.0 * G + H))) *
+                                              outer_product(N_n1, N_n1) +
+                                              K *
+                                              outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+
+                qph->set_consistent_tangent_operator(consistent_tangent_operator);
             }
-            AssertThrow(std::abs(residual) < tolerance,
-                        ExcMessage("Newton iteration did not converge for Von-Mises yield criteria"));
-
-            accumulated_plastic_strain_n1 = accumulated_plastic_strain_n + delta_gamma;
-
-            s_n1[0][0] = (1.0 - (delta_gamma * 3.0 * G) / q_trial) * deviatoric_stress_trial_eigenvalues[0];
-            s_n1[1][1] = (1.0 - (delta_gamma * 3.0 * G) / q_trial) * deviatoric_stress_trial_eigenvalues[1];
-            s_n1[2][2] = (1.0 - (delta_gamma * 3.0 * G) / q_trial) * deviatoric_stress_trial_eigenvalues[2];
-
-            qph->set_principal_stresses({s_n1[0][0], s_n1[1][1], s_n1[2][2]});
-
-            double p_n1 = p_trial;
-
-            stress_n1 = s_n1 + p_n1 * unit_symmetric_tensor<dim>();
-
-            SymmetricTensor<2, dim> stress_n1_reconstructed =
-                    reconstruct_tensor({{stress_n1[0][0], stress_n1[1][1], stress_n1[2][2]}},
-                                       elastic_strain_trial_eigenvectors_matrix);
-
-            elastic_strain_n1 = (1.0 / (2.0 * G)) *
-                                reconstruct_tensor({{s_n1[0][0], s_n1[1][1], s_n1[2][2]}},
-                                                   elastic_strain_trial_eigenvectors_matrix) +
-                                                   (1.0 / 3.0) * e_v_trial * unit_symmetric_tensor<dim>();
-
-            qph->set_stress(stress_n1_reconstructed);
-            qph->set_elastic_strain(elastic_strain_n1);
-            qph->set_accumulated_plastic_strain(accumulated_plastic_strain_n1);
-
-            SymmetricTensor<2, dim> N_n1 = deviatoric_stress_trial / deviatoric_stress_trial.norm();
-
-            consistent_tangent_operator = 2.0 * G * (1.0 - (delta_gamma * 3.0 * G) / q_trial) *
-                    (identity_tensor<dim>() - (1.0 / 3.0) * outer_product(unit_symmetric_tensor<dim>(),
-                            unit_symmetric_tensor<dim>())) + 6.0 * G * G *
-                            (delta_gamma / q_trial - (1.0 / (3.0 * G + H))) * outer_product(N_n1, N_n1) +
-                            K * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
-
-            qph->set_consistent_tangent_operator(consistent_tangent_operator);
-
-            return true;
         }
-        // TODO: This could be a more useful error message
-        AssertThrow(false, ExcNotImplemented());
-
-        return false;
     }
 
     template <int dim>
@@ -1048,12 +954,6 @@ namespace PlasticityModel
                 b = 1;
                 c = 2;
             }
-//            if (x[0] == x[2] && x[1] != x[2])
-//            {
-//                a = 1;
-//                b = 0;
-//                c = 2;
-//            }
             else
                 AssertThrow(false, ExcMessage("Eigenvalues are not sorted in isotropic tensor derivative."));
 
@@ -1264,13 +1164,6 @@ namespace PlasticityModel
                 "2",
                 Patterns::Integer(),
                 "Number of initial global refinements steps before the first computation.");
-//        prm.declare_entry(
-//                "refinement strategy",
-//                "percentage",
-//                Patterns::Selection("global|percentage"),
-//                "Mesh refinement strategy: \n"
-//                "global: one global refinement \n"
-//                "percentage: a fixed percentage of cells gets refined using Kelly error estimator.");
         prm.declare_entry(
                 "number of time-steps",
                 "5",
@@ -1430,6 +1323,40 @@ namespace PlasticityModel
                     n_radial_cells,
                     n_axial_cells,
                     colorize);
+
+            // Assign boundary IDs for lines x=0 and y=0 on the face z=0
+            for (auto &cell : triangulation.active_cell_iterators())
+            {
+                for (unsigned int face = 0; face < GeometryInfo<3>::faces_per_cell; ++face)
+                {
+                    if (cell->face(face)->at_boundary())
+                    {
+                        const auto center = cell->face(face)->center();
+
+                        // Check if the face lies on z=0
+                        if (std::abs(center[2]) < 1e-12)
+                        {
+                            // Loop through the vertices of the face to check conditions
+                            for (unsigned int v = 0; v < GeometryInfo<3>::vertices_per_face; ++v)
+                            {
+                                const auto vertex = cell->face(face)->vertex(v);
+
+                                // Check if x=0
+                                if (std::abs(vertex[0]) < 1e-12)
+                                {
+                                    cell->face(face)->set_boundary_id(111); // Boundary ID 1 for x=0
+                                }
+
+                                // Check if y=0
+                                if (std::abs(vertex[1]) < 1e-12)
+                                {
+                                    cell->face(face)->set_boundary_id(222); // Boundary ID 2 for y=0
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         triangulation.refine_global(n_initial_global_refinements);  // refine the mesh globally
     }
@@ -1595,6 +1522,7 @@ namespace PlasticityModel
         }
         else if (problem_type == "torsion")
         {
+            // the following will fix the bottom in all directions
             VectorTools::interpolate_boundary_values(
                     dof_handler,
                     2,
@@ -1602,6 +1530,31 @@ namespace PlasticityModel
                     constraints_dirichlet_and_hanging_nodes,
                     (fe.component_mask(x_displacement) | fe.component_mask(z_displacement) | fe.component_mask(y_displacement)));
 
+
+            // the following is to fix lines on the base of the cylinder
+//            VectorTools::interpolate_boundary_values(
+//                    dof_handler,
+//                    2,
+//                    Functions::ZeroFunction<dim>(dim),
+//                    constraints_dirichlet_and_hanging_nodes,
+//                    fe.component_mask(z_displacement));
+//
+//            VectorTools::interpolate_boundary_values(
+//                    dof_handler,
+//                    111,
+//                    Functions::ZeroFunction<dim>(dim),
+//                    constraints_dirichlet_and_hanging_nodes,
+//                    (fe.component_mask(y_displacement) | fe.component_mask(z_displacement)));
+//
+//            VectorTools::interpolate_boundary_values(
+//                    dof_handler,
+//                    222,
+//                    Functions::ZeroFunction<dim>(dim),
+//                    constraints_dirichlet_and_hanging_nodes,
+//                    (fe.component_mask(x_displacement) | fe.component_mask(z_displacement)));
+
+
+            // the following is to apply a Dirichlet BC to the top face
 //            VectorTools::interpolate_boundary_values(
 //                    dof_handler,
 //                    3,
@@ -1826,15 +1779,15 @@ namespace PlasticityModel
     template <int dim>
     void PlasticityProblem<dim>::solve_newton(unsigned int n_time_steps, unsigned int t_step)
     {
-        const double tolerance = 1e-6;
+        const double tolerance = 1e-5;
 
         double first_newton_increment_norm;
 
         double previous_residual_norm;
         double current_residual_norm;
 
-        TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
-        TrilinosWrappers::MPI::Vector tentative_solution(locally_owned_dofs, mpi_communicator);
+//        TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
+//        TrilinosWrappers::MPI::Vector tentative_solution(locally_owned_dofs, mpi_communicator);
 
         for (unsigned int newton_step = 0; newton_step <= 50; ++newton_step)
         {
@@ -1863,7 +1816,7 @@ namespace PlasticityModel
 
             assemble_newton_system(solution, old_solution, false,n_time_steps, t_step);
 
-            tmp_solution = solution;
+//            tmp_solution = solution;
 
             current_residual_norm = newton_rhs.l2_norm();
             std::cout << "      Current residual norm: " << current_residual_norm << std::endl;
@@ -1879,63 +1832,63 @@ namespace PlasticityModel
 
 
 
-            // Line-search algorithm
-            double alpha = 1.0;
-            const double beta = 0.01; // Reduction factor for alpha
-
-            if (newton_step != 0)
-                if (current_residual_norm > previous_residual_norm)
-                {
-                    double residual_norm;
-
-                    while (true)
-                    {
-                        // Compute tentative solution
-                        tentative_solution = solution;
-
-                        tentative_solution.add(-1, newton_increment);
-
-                        tentative_solution.add(alpha, newton_increment);
-
-//                        tmp_solution.add(alpha, newton_increment);
-
-                        newton_rhs = 0.;
-
-                        // Assemble residual with tmp_solution
-                        assemble_newton_system(tentative_solution, old_solution, true,
-                                               n_time_steps, t_step); // Only assemble RHS (residual)
-
-                        residual_norm = newton_rhs.l2_norm();
-
-                        pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
-
-                        if (residual_norm <= previous_residual_norm)
-                        {
-                            // Accept the step if residual is sufficiently decreased
-                            break;
-                        }
-                        else
-                        {
-                            alpha = std::max(0.0, alpha - beta);
-                            if (alpha == 0.0)
-                            {
-                                pcout << "      Line search failed to find acceptable alpha." << std::endl;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-//            tmp_solution = solution;
-
-            solution.add(alpha, newton_increment);
-            previous_residual_norm = current_residual_norm;
-
-
-
+//            // Line-search algorithm
+//            double alpha = 1.0;
+//            const double beta = 0.01; // Reduction factor for alpha
+//
+//            if (newton_step != 0)
+//                if (current_residual_norm > previous_residual_norm)
+//                {
+//                    double residual_norm;
+//
+//                    while (true)
+//                    {
+//                        // Compute tentative solution
+//                        tentative_solution = solution;
+//
+//                        tentative_solution.add(-1, newton_increment);
+//
+//                        tentative_solution.add(alpha, newton_increment);
+//
+////                        tmp_solution.add(alpha, newton_increment);
+//
+//                        newton_rhs = 0.;
+//
+//                        // Assemble residual with tmp_solution
+//                        assemble_newton_system(tentative_solution, old_solution, true,
+//                                               n_time_steps, t_step); // Only assemble RHS (residual)
+//
+//                        residual_norm = newton_rhs.l2_norm();
+//
+//                        pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
+//
+//                        if (residual_norm <= previous_residual_norm)
+//                        {
+//                            // Accept the step if residual is sufficiently decreased
+//                            break;
+//                        }
+//                        else
+//                        {
+//                            alpha = std::max(0.0, alpha - beta);
+//                            if (alpha == 0.0)
+//                            {
+//                                pcout << "      Line search failed to find acceptable alpha." << std::endl;
+//                                break;
+//                            }
+//                        }
+//                    }
+//                }
+//
+////            tmp_solution = solution;
+//
+//            solution.add(alpha, newton_increment);
 //            previous_residual_norm = current_residual_norm;
 
-//            solution += newton_increment;
+
+
+            previous_residual_norm = current_residual_norm;
+
+            solution += newton_increment;
 
             if (newton_step == 0)
             {
@@ -2026,10 +1979,7 @@ namespace PlasticityModel
 
         const QGauss<dim> quadrature_formula(fe.degree + 1);
 
-        // TODO: Make the mapping the same as the polynomial degree of the finite element space
-        // MappingQ1<dim> mapping;
         MappingQ<dim> mapping(fe_degree);
-        // MappingQ<dim> mapping_zero(0);
 
         const std::vector<DataComponentInterpretation::DataComponentInterpretation>
                 data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
