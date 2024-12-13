@@ -63,6 +63,8 @@
 #include <cerrno>
 
 
+// TODO: remove the stuff related to the refinement strategy
+
 namespace PlasticityModel
 {
     using namespace dealii;
@@ -71,7 +73,7 @@ namespace PlasticityModel
     class PointHistory
     {
     public:
-        PointHistory();
+        PointHistory(double K, double G);
 
         void store_internal_variables();
 
@@ -120,17 +122,14 @@ namespace PlasticityModel
     };
 
     template <int dim>
-    PointHistory<dim>::PointHistory()
+    PointHistory<dim>::PointHistory(double K, double G)
     {
-        // TODO: Material properties should be obtained from the material class
-        const double shear_modulus = 76920.0;
-        const double bulk_modulus = 166670.0;
-
         // setting the initial value of the consistent tangent operator to the elastic consistent tangent operator
-        consistent_tangent_operator = 2.0 * shear_modulus *
-                (identity_tensor<dim>() - 1.0 / 3.0 * outer_product(unit_symmetric_tensor<dim>(),
-                        unit_symmetric_tensor<dim>())) + bulk_modulus * outer_product(unit_symmetric_tensor<dim>(),
-                                unit_symmetric_tensor<dim>());
+        consistent_tangent_operator = 2.0 * G * (identity_tensor<dim>() - 1.0 / 3.0 *
+                outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>())) + K *
+                        outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+
+        is_plastic = false;
 
         stored_is_plastic = false;
     }
@@ -152,7 +151,7 @@ namespace PlasticityModel
     template <int dim>
     void PointHistory<dim>::set_strain(const SymmetricTensor<2, dim> &strain)
     {
-        this->plastic_strain = strain;
+        this->strain = strain;
     }
 
     template <int dim>
@@ -190,7 +189,7 @@ namespace PlasticityModel
     template<int dim>
     SymmetricTensor<2, dim> PointHistory<dim>::get_strain() const
     {
-        return plastic_strain;
+        return strain;
     }
 
     template <int dim>
@@ -565,12 +564,13 @@ namespace PlasticityModel
                 ds_de[2][1] = -(4.0 * pow(G, 2.0) / det_d) * dab;
                 ds_de[2][2] = 2.0 * G * (1.0 + ((2.0 * G * dbb) / det_d));
 
-                for (unsigned int i = 0; i < 3; ++i)
-                    for (unsigned int j = 0; j < 3; ++j)
+                // TODO: Add check to ensure that it is symmetric in run state
+                for (unsigned int i = 0; i < dim; ++i)
+                    for (unsigned int j = 0; j < dim; ++j)
                     {
                         dsigma_de[i][j] = K;
 
-                        for (unsigned int k = 0; k < 3; ++k)
+                        for (unsigned int k = 0; k < dim; ++k)
                         {
                             double delta_kj = (k == j) ? 1.0 : 0.0;
                             dsigma_de[i][j] += ds_de[i][k] * (delta_kj - 1.0 / 3.0);
@@ -890,6 +890,45 @@ namespace PlasticityModel
         return false;
     }
 
+    template <int dim>
+    SymmetricTensor<4, dim> symmetrize_tensor(const Tensor<4, dim> &D, const double rel_tol = 1e-3, bool check_for_symm = false)
+    {
+        SymmetricTensor<4, dim> symmetrized_D;
+
+        // Loop through all components and symmetrize
+        for (unsigned int i = 0; i < dim; ++i)
+        {
+            for (unsigned int j = 0; j < dim; ++j)
+            {
+                for (unsigned int k = 0; k < dim; ++k)
+                {
+                    for (unsigned int l = 0; l < dim; ++l)
+                    {
+                        // Symmetrize the tensor
+                        symmetrized_D[i][j][k][l] = 1.0/3 * (    D[i][j][k][l]
+                                                                 + D[j][i][k][l]
+                                                                 + D[i][j][l][k]);
+                    }
+                }
+            }
+        }
+
+        // Now check if the symmetrized tensor and original tensor are equivalent within tolerance
+        if(check_for_symm)
+            for (unsigned int i = 0; i < dim; ++i)
+                for (unsigned int j = 0; j < dim; ++j)
+                    for (unsigned int k = 0; k < dim; ++k)
+                        for (unsigned int l = 0; l < dim; ++l)
+                        {
+                            double original_value = D[i][j][k][l];
+                            double symmetrized_value = symmetrized_D[i][j][k][l];
+                            AssertThrow(std::fabs(original_value - symmetrized_value) <= abs(original_value)/rel_tol,
+                                        ExcMessage("Tensor components are not symmetric within the specified tolerance."));
+                        }
+
+        return symmetrized_D;
+    }
+
     // TODO: Check if the following function is correct
     template <int dim>
     SymmetricTensor<4, dim> ConstitutiveLaw<dim>::derivative_of_isotropic_tensor(
@@ -940,10 +979,10 @@ namespace PlasticityModel
         }
 
         // Compute the projection tensors Ei = ei ⊗ ei for each eigenvector
-        std::array<SymmetricTensor<2, dim>, 3> E;
+        std::array<Tensor<2, dim>, 3> E;
 
         // Initialize the 4th-order tensor D to zero
-        SymmetricTensor<4, dim> D;
+        Tensor<4, dim> D;
 
         // The following can be found in box A.6 of the textbook
         if (x[0] != x[1] && x[1] != x[2])
@@ -986,24 +1025,37 @@ namespace PlasticityModel
                 }
             }
         }
-        else if (x[0] == x[1] || x[1] == x[2] || x[0] == x[2])
+        else if (x[0] == x[1] && x[1] == x[2])
+        {
+            D = (dy_dx[0][0] - dy_dx[0][1]) * identity_tensor<dim>() +
+                dy_dx[0][1] * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
+        }
+        else
         {
             unsigned int a;
             unsigned int b;
             unsigned int c;
 
-            if (x[0] == x[1])
+            if (x[0] == x[1] && x[1] != x[2])
             {
                 a = 2;
                 b = 0;
                 c = 1;
             }
-            if (x[1] == x[2])
+            else if (x[1] == x[2] && x[0] != x[1])
             {
                 a = 0;
                 b = 1;
                 c = 2;
             }
+//            if (x[0] == x[2] && x[1] != x[2])
+//            {
+//                a = 1;
+//                b = 0;
+//                c = 2;
+//            }
+            else
+                AssertThrow(false, ExcMessage("Eigenvalues are not sorted in isotropic tensor derivative."));
 
             // The following are not deviatoric stress values
             double s1 = (y[a] - y[c]) / ((x[a] - x[c]) * (x[a] - x[c])) +
@@ -1033,13 +1085,10 @@ namespace PlasticityModel
                     s5 * outer_product(unit_symmetric_tensor<dim>(), X) -
                     s6 * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
         }
-        else if (x[0] == x[1] && x[1] == x[2])
-        {
-            D = (dy_dx[0][0] - dy_dx[0][1]) * identity_tensor<dim>() +
-                    dy_dx[0][1] * outer_product(unit_symmetric_tensor<dim>(), unit_symmetric_tensor<dim>());
-        }
 
-        return D;
+        SymmetricTensor<4, dim> D_sym = symmetrize_tensor(D);
+
+        return D_sym;
     }
 
 
@@ -1049,8 +1098,9 @@ namespace PlasticityModel
         class BoundaryForce : public TensorFunction<1, dim, double>{
         public:
             BoundaryForce(std::string problem_type, double inner_radius, double outer_radius, double normal_force,
-                          double torque) : TensorFunction<1, dim, double>(), problem_type(problem_type), inner_radius(inner_radius),
-                          outer_radius(outer_radius), normal_force(normal_force), torque(torque){}
+                          double torque) : TensorFunction<1, dim, double>(), problem_type(problem_type),
+                          inner_radius(inner_radius), outer_radius(outer_radius), normal_force(normal_force),
+                          torque(torque){}
 
             virtual Tensor<1, dim> value(const Point<dim> &p) const override
             {
@@ -1099,16 +1149,16 @@ namespace PlasticityModel
     public:
         PlasticityProblem(const ParameterHandler& prm);
 
-        const std::string loading;
-
         void run();
 
         static void declare_parameters(ParameterHandler& prm);
 
+        const std::string loading;
+
     private:
         void make_grid(std::string mesh);
         void setup_system();
-        void compute_dirichlet_constraints(const double displacment, std::string problem_type);
+        void compute_dirichlet_constraints(const double displacement, std::string problem_type);
         void assemble_newton_system(const TrilinosWrappers::MPI::Vector &solution,
                                     const TrilinosWrappers::MPI::Vector &old_solution, const bool rhs_only = false,
                                     unsigned int n_t_steps = 1, unsigned int t_step = 0);
@@ -1186,7 +1236,7 @@ namespace PlasticityModel
             };
         };
 
-        typename RefinementStrategy::value refinement_strategy;
+        // typename RefinementStrategy::value refinement_strategy;
 
         const bool transfer_solution;
         std::string output_dir;
@@ -1214,13 +1264,13 @@ namespace PlasticityModel
                 "2",
                 Patterns::Integer(),
                 "Number of initial global refinements steps before the first computation.");
-        prm.declare_entry(
-                "refinement strategy",
-                "percentage",
-                Patterns::Selection("global|percentage"),
-                "Mesh refinement strategy: \n"
-                "global: one global refinement \n"
-                "percentage: a fixed percentage of cells gets refined using Kelly error estimator.");
+//        prm.declare_entry(
+//                "refinement strategy",
+//                "percentage",
+//                Patterns::Selection("global|percentage"),
+//                "Mesh refinement strategy: \n"
+//                "global: one global refinement \n"
+//                "percentage: a fixed percentage of cells gets refined using Kelly error estimator.");
         prm.declare_entry(
                 "number of time-steps",
                 "5",
@@ -1328,13 +1378,13 @@ namespace PlasticityModel
             , normal_force(prm.get_double("normal force"))
             , torque(prm.get_double("torque"))
     {
-        std::string strat = prm.get("refinement strategy");
-        if (strat == "global")
-            refinement_strategy = RefinementStrategy::refine_global;
-        else if (strat == "percentage")
-            refinement_strategy = RefinementStrategy::refine_percentage;
-        else
-            AssertThrow(false, ExcNotImplemented());
+//        std::string strat = prm.get("refinement strategy");
+//        if (strat == "global")
+//            refinement_strategy = RefinementStrategy::refine_global;
+//        else if (strat == "percentage")
+//            refinement_strategy = RefinementStrategy::refine_percentage;
+//        else
+//            AssertThrow(false, ExcNotImplemented());
 
         output_dir = prm.get("output directory");
         if (output_dir != "" && *(output_dir.rbegin()) != '/')
@@ -1440,7 +1490,7 @@ namespace PlasticityModel
             {
                 for (unsigned int q = 0; q < quadrature_formula.size(); ++q)
                 {
-                    quadrature_point_history[local_history_index] = std::make_shared<PointHistory<dim>>();
+                    quadrature_point_history[local_history_index] = std::make_shared<PointHistory<dim>>(kappa, mu);
                     ++local_history_index;
                 }
             }
@@ -1783,6 +1833,9 @@ namespace PlasticityModel
         double previous_residual_norm;
         double current_residual_norm;
 
+        TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
+        TrilinosWrappers::MPI::Vector tentative_solution(locally_owned_dofs, mpi_communicator);
+
         for (unsigned int newton_step = 0; newton_step <= 50; ++newton_step)
         {
             pcout << ' ' << std::endl;
@@ -1810,6 +1863,8 @@ namespace PlasticityModel
 
             assemble_newton_system(solution, old_solution, false,n_time_steps, t_step);
 
+            tmp_solution = solution;
+
             current_residual_norm = newton_rhs.l2_norm();
             std::cout << "      Current residual norm: " << current_residual_norm << std::endl;
 
@@ -1824,70 +1879,63 @@ namespace PlasticityModel
 
 
 
-//            // Line-search algorithm
-//            TrilinosWrappers::MPI::Vector tmp_solution(locally_owned_dofs, mpi_communicator);
-//
-//            if (newton_step != 0)
-//                if (current_residual_norm > previous_residual_norm)
-//                {
-//                    // Line search algorithm
-//                    double alpha = 1.0;
-//                    const double beta = 0.01; // Reduction factor for alpha
-//
-//                    double residual_norm;
-//
-//                    while (true)
-//                    {
-//                        // Compute tentative solution
-//                        tmp_solution = solution;
+            // Line-search algorithm
+            double alpha = 1.0;
+            const double beta = 0.01; // Reduction factor for alpha
+
+            if (newton_step != 0)
+                if (current_residual_norm > previous_residual_norm)
+                {
+                    double residual_norm;
+
+                    while (true)
+                    {
+                        // Compute tentative solution
+                        tentative_solution = solution;
+
+                        tentative_solution.add(-1, newton_increment);
+
+                        tentative_solution.add(alpha, newton_increment);
+
 //                        tmp_solution.add(alpha, newton_increment);
-//
-//                        newton_rhs = 0.;
-//
-//                        // Assemble residual with tmp_solution
-//                        assemble_newton_system(tmp_solution, old_solution, true, n_time_steps, t_step); // Only assemble RHS (residual)
-//
-//                        residual_norm = newton_rhs.l2_norm();
-//
-//                        pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
-//
-//                        if (residual_norm <= previous_residual_norm)
-//                        {
-//                            // Accept the step if residual is sufficiently decreased
-//                            break;
-//                        }
-//                        else
-//                        {
-//                            alpha = std::max(0.0, alpha - beta);
-//                            if (alpha == 0.0)
-//                            {
-//                                pcout << "      Line search failed to find acceptable alpha." << std::endl;
-//                                break;
-//                            }
-//                        }
-//                    }
-//                    previous_residual_norm = residual_norm;
-//
-//                    solution = tmp_solution;
-//                }
-//                else
-//                {
-//                    previous_residual_norm = current_residual_norm;
-//
-//                    solution += newton_increment;
-//                }
-//            else
-//            {
-//                previous_residual_norm = current_residual_norm;
-//
-//                solution += newton_increment;
-//            }
 
+                        newton_rhs = 0.;
 
+                        // Assemble residual with tmp_solution
+                        assemble_newton_system(tentative_solution, old_solution, true,
+                                               n_time_steps, t_step); // Only assemble RHS (residual)
 
+                        residual_norm = newton_rhs.l2_norm();
+
+                        pcout << "      Line search alpha: " << alpha << ", residual norm: " << residual_norm << std::endl;
+
+                        if (residual_norm <= previous_residual_norm)
+                        {
+                            // Accept the step if residual is sufficiently decreased
+                            break;
+                        }
+                        else
+                        {
+                            alpha = std::max(0.0, alpha - beta);
+                            if (alpha == 0.0)
+                            {
+                                pcout << "      Line search failed to find acceptable alpha." << std::endl;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+//            tmp_solution = solution;
+
+            solution.add(alpha, newton_increment);
             previous_residual_norm = current_residual_norm;
 
-            solution += newton_increment;
+
+
+//            previous_residual_norm = current_residual_norm;
+
+//            solution += newton_increment;
 
             if (newton_step == 0)
             {
@@ -1978,7 +2026,10 @@ namespace PlasticityModel
 
         const QGauss<dim> quadrature_formula(fe.degree + 1);
 
-        MappingQ1<dim> mapping;
+        // TODO: Make the mapping the same as the polynomial degree of the finite element space
+        // MappingQ1<dim> mapping;
+        MappingQ<dim> mapping(fe_degree);
+        // MappingQ<dim> mapping_zero(0);
 
         const std::vector<DataComponentInterpretation::DataComponentInterpretation>
                 data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
@@ -2033,7 +2084,6 @@ namespace PlasticityModel
                                                             quadrature_formula.size();
                                  const std::shared_ptr<PointHistory<dim>> &lqph =
                                          quadrature_point_history[local_index + q_point];
-                                 //const SymmetricTensor<2, dim> &T = lqph->get_a();
                                  bool is_p = lqph->get_is_plastic();
 
                                  return is_p? 1.0 : 0.0;
