@@ -7,7 +7,6 @@
  *              which is referred to as 'the textbook' in the comments.
  */
 
-
 // include the necessary libraries
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/parameter_handler.h>
@@ -58,10 +57,87 @@
 #include <utility>
 #include <numeric>
 #include <cmath>
+#include <iomanip>
+#include <sstream>
+#include <type_traits>
+#include <string>
 
 #include <sys/stat.h>
 #include <cerrno>
 
+// Formatting function to control output of ints and doubles
+template <typename T>
+std::string formatValue(T value, int intDigits = 0, int mantissaPrecision = 2, int exponentDigits = 3) {
+    if constexpr (std::is_integral_v<T>) {
+        // Integer formatting (signed and unsigned)
+        std::string result(intDigits + 1, ' '); // +1 for sign or leading space
+
+        // Determine the sign or leading space
+        if constexpr (std::is_signed_v<T>) {
+            if (value < 0) {
+                result[0] = '-';
+                value = -value; // Make value positive for formatting
+            } else {
+                result[0] = ' ';
+            }
+        } else {
+            // Unsigned integers always have a leading space
+            result[0] = ' ';
+        }
+
+        // Convert the value to a string
+        std::string absValue = std::to_string(value);
+
+        // Pad with zeros to fit the required width
+        if (absValue.size() < static_cast<size_t>(intDigits)) {
+            absValue.insert(0, intDigits - absValue.size(), '0'); // Left-pad with zeros
+        }
+
+        // Insert the padded number into the result string
+        result.replace(1, intDigits, absValue);
+
+        return result;
+
+    } else if constexpr (std::is_floating_point_v<T>) {
+        // Double formatting
+        std::ostringstream tempStream;
+        tempStream << std::scientific << std::setprecision(mantissaPrecision) << value;
+        std::string result = tempStream.str();
+
+        // Find the position of the 'e' (scientific notation delimiter)
+        std::size_t ePos = result.find('e');
+        if (ePos != std::string::npos) {
+            std::string mantissa = result.substr(0, ePos); // Extract the mantissa
+            std::string exponent = result.substr(ePos + 1); // Extract the exponent part
+
+            // Convert exponent to an integer
+            int expValue = std::stoi(exponent);
+
+            // Format the exponent with correct width
+            std::ostringstream expStream;
+            expStream << (expValue < 0 ? '-' : '+');  // Add the sign manually
+            expStream << std::setw(exponentDigits) << std::setfill('0') << std::abs(expValue);
+
+            // Combine mantissa and formatted exponent
+            std::string formatted = mantissa + "e" + expStream.str();
+
+            // Add leading space for positive numbers
+            if (value >= 0) {
+                formatted = " " + formatted;
+            }
+
+            return formatted;
+        }
+
+        // Fallback if no 'e' is found
+        return result;
+    } else {
+        // Default fallback for unsupported types: use ostringstream for general printing
+        std::ostringstream oss;
+        oss << value;
+        return oss.str();
+    }
+}
 
 // TODO: remove the stuff related to the refinement strategy
 
@@ -1420,6 +1496,11 @@ namespace PlasticityModel
                 }
             }
         }
+
+        pcout << "   Number of active cells: "
+                      << triangulation.n_global_active_cells() << std::endl
+                      << "   Number of degrees of freedom: " << dof_handler.n_dofs()
+                      << std::endl;
     }
 
 
@@ -1775,6 +1856,11 @@ namespace PlasticityModel
     template <int dim>
     void PlasticityProblem<dim>::solve_newton(unsigned int n_time_steps, unsigned int t_step)
     {
+        // Print header for output table
+        pcout << "     =========================================="<< std::endl;
+        pcout << "     | STEP | ITER |     NORM    |    ALPHA   |" << std::endl;
+        pcout << "     ------------------------------------------"<< std::endl;
+
         // TODO: create these once when setting up system for runtime efficiency
         // Declare newton_update vector (solution of a Newton iteration),
         // which must have as many positions as global DoFs.
@@ -1792,16 +1878,6 @@ namespace PlasticityModel
         unsigned int max_iterations_main_newton_loop = 250;
         for (unsigned int newton_step = 0; newton_step < max_iterations_main_newton_loop; ++newton_step)
         {
-            pcout << ' ' << std::endl;
-            pcout << "   Newton iteration " << newton_step << std::endl;
-
-            bool main_newton_loop_converged = false;
-            if (newton_step != 0)
-            {
-                std::cout << "      Norm at start of previous step: " << previous_residual_norm << std::endl;
-            }
-
-            // pcout << "      Assembling system... " << std::endl;
             newton_matrix = 0.;
             newton_rhs = 0.;
 
@@ -1819,11 +1895,7 @@ namespace PlasticityModel
             assemble_newton_system(solution, old_solution, false,n_time_steps, t_step);
 
             current_residual_norm = newton_rhs.l2_norm();
-            std::cout << "      Norm based on solution from previous step: " << current_residual_norm << std::endl;
-
             newton_increment = 0;
-
-            // pcout << "      Solving system... " << std::endl;
             solve_newton_system(newton_increment);
 
             all_constraints.distribute(newton_increment);
@@ -1832,12 +1904,15 @@ namespace PlasticityModel
             double norm_tentative_soln;
             tentative_solution = solution;
             tentative_solution.add(1.0,newton_increment);
-            bool line_search_successful = false;
-            if (true || newton_step!=0) {
-                // Line-search algorithm
-                double alpha = 1.0;
-                const double beta = 0.01; // Reduction factor for alpha
 
+            // Line-search algorithm
+            // TODO: make option to use line search a parameter
+            const bool use_line_search = true;
+            bool line_search_successful = false;
+            double alpha = 1.0;
+            double last_norm_tentative_soln = current_residual_norm;
+            if (use_line_search) {
+                const double beta = 0.01; // Reduction factor for alpha
                 while (alpha>= beta) {
                     tentative_solution = solution;
                     tentative_solution.add(1.0,newton_increment);
@@ -1846,25 +1921,35 @@ namespace PlasticityModel
                                                    n_time_steps, t_step); // Only assemble RHS (residual)
 
                     norm_tentative_soln = newton_rhs.l2_norm();
-                    std::cout<<"      Norm of tentative new solution "<<norm_tentative_soln<<"with alpha of "<<alpha<<std::endl;
-                    if (norm_tentative_soln<current_residual_norm || norm_tentative_soln<= tolerance) {
+                    if (norm_tentative_soln<last_norm_tentative_soln || norm_tentative_soln<= tolerance) {
                         line_search_successful = true;
                         break;
                     }
+                    last_norm_tentative_soln = norm_tentative_soln;
                     alpha -= beta;
                 }
             }
-            if (line_search_successful)
+            if (newton_step == 0 || line_search_successful) {
                 solution = tentative_solution;
-            else
-                AssertThrow(false, ExcMessage("Step does not make things better"));
 
-            previous_residual_norm = current_residual_norm;
+                // Print output table
+                newton_step == 0 ?
+                    pcout << "     | " << formatValue(t_step,3) << " | " :
+                    pcout << "     |      | ";
+
+                pcout << formatValue(newton_step,3) << " | "
+                << formatValue(norm_tentative_soln,5,3) << " | "
+                << formatValue(alpha,4,2) << " |" << std::endl;
+            }
+            else
+                solution = tentative_solution; // Allowing step that does not improve residual in case it may unstick solve
+
+            // previous_residual_norm = norm_tentative_soln;
 
             if (std::abs(current_residual_norm) < tolerance)
                 break;
 
-            // AssertThrow(false, ExcMessage("Did not converge"));
+            // TODO: Add check for non-convergence
         }
     }
 
@@ -1923,7 +2008,7 @@ namespace PlasticityModel
                                                 const std::string output_name)
     {
         TimerOutput::Scope t(computing_timer, "Graphical output");
-        pcout << "      Writing graphical output... " << std::flush;
+        // pcout << "      Writing graphical output... " << std::flush;
 
         move_mesh(solution);
 
@@ -2028,13 +2113,12 @@ namespace PlasticityModel
                 data_out.write_vtu_with_pvtu_record(output_dir,
                                                     output_name, current_time_step, mpi_communicator,
                                                     2);
-        pcout << pvtu_filename << std::flush;
+        // pcout << pvtu_filename << std::flush;
 
         TrilinosWrappers::MPI::Vector tmp(solution);
         tmp *= -1.0;
         move_mesh(tmp);
 
-        std::cout << std::endl;
     }
 
 
@@ -2083,9 +2167,8 @@ namespace PlasticityModel
 
         for (unsigned int t_step = 0; t_step < n_t_steps; ++t_step)
         {
-            std::cout << std::endl;
-
-            std::cout << "Step: " << t_step << std::endl;
+            // std::cout << std::endl;
+            // std::cout << "Step: " << t_step << std::endl;
 
             if (reverse_loading == false && displacement >= applied_displacement)
             {
@@ -2110,10 +2193,7 @@ namespace PlasticityModel
                 scalar_constraints.reinit(locally_owned_scalar_dofs, locally_relevant_scalar_dofs);
                 DoFTools::make_hanging_node_constraints(dof_handler, constraints_hanging_nodes);
 
-                pcout << "   Number of active cells: "
-                      << triangulation.n_global_active_cells() << std::endl
-                      << "   Number of degrees of freedom: " << dof_handler.n_dofs()
-                      << std::endl;
+
 
                 compute_dirichlet_constraints(delta_displacement, problem);
 
