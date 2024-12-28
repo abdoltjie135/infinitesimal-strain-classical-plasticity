@@ -1101,11 +1101,10 @@ namespace PlasticityModel
         template<int dim>
         class BoundaryForce : public TensorFunction<1, dim, double>{
         public:
-            BoundaryForce(std::string problem_type, double inner_radius, double outer_radius, double normal_force,
-                          double torque) : TensorFunction<1, dim, double>(), problem_type(problem_type),
-                                           inner_radius(inner_radius), outer_radius(outer_radius),
-                                           /* normal_force(normal_force) ,*/ torque(torque)
-                                           {}
+            BoundaryForce(std::string problem_type, double inner_radius, double outer_radius, double torque) :
+            TensorFunction<1, dim, double>(), problem_type(problem_type), inner_radius(inner_radius),
+            outer_radius(outer_radius), torque(torque)
+            {}
 
             virtual Tensor<1, dim> value(const Point<dim> &p) const override
             {
@@ -1227,7 +1226,6 @@ namespace PlasticityModel
         const double outer_radius;
         const double inner_radius;
 
-        const double normal_force;
         const double torque;
     };
 
@@ -1309,11 +1307,6 @@ namespace PlasticityModel
                 Patterns::Double(),
                 "The inner radius of the hollow cylinder.");
         prm.declare_entry(
-                "normal force",
-                "7.0",
-                Patterns::Double(),
-                "The normal force applied the free-end.");
-        prm.declare_entry(
                 "torque",
                 "5.0",
                 Patterns::Double(),
@@ -1361,7 +1354,6 @@ namespace PlasticityModel
             , outer_radius(prm.get_double("outer radius"))
             , inner_radius(prm.get_double("inner radius"))
 
-            , normal_force(prm.get_double("normal force"))
             , torque(prm.get_double("torque"))
     {
         output_dir = prm.get("output directory");
@@ -1677,7 +1669,7 @@ namespace PlasticityModel
                             for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
                             {
                                 EquationData::BoundaryForce<dim> boundary_force(problem, inner_radius, outer_radius,
-                                                                                normal_force, torque);
+                                                                                torque);
 
                                 Tensor<1, dim> traction;
                                 traction = (1.0 / n_t_steps) * (t_step + 1) *
