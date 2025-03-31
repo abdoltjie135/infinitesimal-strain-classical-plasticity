@@ -1,4 +1,2 @@
 # Inifinitesimal strain classical plasticity model (Von-Mises & Tresca)
-Abdul Gafeeth Benjamin's Elastoplasticity Model (built in deal.ii) for MEC 5068Z 2024.
-
-The model is capable of simulating the Von-Mises and Tresca yield criteria with linear isotropic hardening or perfect plasticity. The small strain assumption was made.
+Built in deal.ii. Capable of simulating the Von-Mises and Tresca yield criteria with linear isotropic hardening or perfect plasticity. The small strain assumption was made.
