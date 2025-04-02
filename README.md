@@ -8,5 +8,3 @@ Three test cases are provided which can be driven by Dirichlet or Neumann bounda
 - 1D tensile test
 - plane shear
 - tension and torsion of a hollow cylinder
-
-![Screenshot](images/stress_yy.png)
