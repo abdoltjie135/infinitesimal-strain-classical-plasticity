@@ -1,9 +1,3 @@
-#CMAKE files
-*.cmake
-CMakeCache.txt
-CMakeFiles/
-./cmake-build-debug-wsl
-Makefile
-
-./images
+images
+cmake-build-debug-wsl
 compile_commands.json
