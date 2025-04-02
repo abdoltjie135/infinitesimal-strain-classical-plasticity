@@ -1,0 +1,9 @@
+#CMAKE files
+*.cmake
+CMakeCache.txt
+CMakeFiles/
+./cmake-build-debug-wsl
+Makefile
+
+./images
+compile_commands.json
