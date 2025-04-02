@@ -1,4 +1,4 @@
-# Inifinitesimal strain classical plasticity model (Von-Mises & Tresca)
+# Inifinitesimal strain classical plasticity (Von-Mises & Tresca) model 
 Built in deal.II v9.6.0. Capable of simulating the Von-Mises and Tresca yield criteria with linear isotropic hardening or perfect plasticity. 
 The small strain assumption was made. 
 The algorithms and theoretical background can be found in: 
